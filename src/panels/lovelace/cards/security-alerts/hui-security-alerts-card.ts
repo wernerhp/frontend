@@ -24,9 +24,11 @@ import "./hui-security-alerts-list";
 export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
   public connectedWhileHidden = true;
 
-  private _alertsProvider = new ContextProvider(this, {
+  private _alertsProvider = new ContextProvider<{
+    __context__: SecurityAlertItem[];
+  }>(this, {
     context: securityAlertsContext,
-    initialValue: [] as SecurityAlertItem[],
+    initialValue: [],
   });
 
   @state() private _config?: SecurityAlertsCardConfig;
