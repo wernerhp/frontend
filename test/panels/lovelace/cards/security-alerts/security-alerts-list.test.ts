@@ -23,13 +23,14 @@ const state = (): HassEntity => ({
   context: { id: "", parent_id: null, user_id: null },
 });
 
-const alert = (pulse: boolean): SecurityAlertItem => {
+const alert = (pulse: boolean, color?: string): SecurityAlertItem => {
   const stateObj = state();
   return {
     entityId: stateObj.entity_id,
     stateObj,
     severity: "warning",
     pulse,
+    color,
   };
 };
 
@@ -65,5 +66,15 @@ describe("hui-security-alerts-list", () => {
 
     const card = element.shadowRoot!.querySelector("ha-card")!;
     expect(card.classList.contains("pulse")).toBe(true);
+  });
+
+  it("does not apply the default severity color when color is none", async () => {
+    const element = await createList([alert(true, "none")]);
+
+    const card = element.shadowRoot!.querySelector("ha-card")!;
+
+    expect(card.classList.contains("warning")).toBe(false);
+    expect(card.classList.contains("no-color")).toBe(true);
+    expect(card.style.getPropertyValue("--ha-security-alert-color")).toBe("");
   });
 });

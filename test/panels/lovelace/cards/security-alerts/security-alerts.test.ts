@@ -6,7 +6,7 @@ import {
   computeSecurityAlertItems,
   isSecurityAlertEntity,
   type SecurityAlertHass,
-} from "../../../../src/panels/security/strategies/security-alerts";
+} from "../../../../../src/panels/security/strategies/security-alerts";
 
 const state = (
   entityId: string,
@@ -257,6 +257,23 @@ describe("computeSecurityAlertItems", () => {
         { entity: "binary_sensor.window" },
       ])[0]
     ).toMatchObject({ color: undefined });
+  });
+
+  it("keeps no color as an explicit color choice", () => {
+    const states = {
+      "binary_sensor.window": state(
+        "binary_sensor.window",
+        "on",
+        "window",
+        "2026-01-01T00:00:00Z"
+      ),
+    };
+
+    expect(
+      computeSecurityAlertItems(hass(states), [
+        { entity: "binary_sensor.window", color: "none" },
+      ])[0]
+    ).toMatchObject({ color: "none" });
   });
 
   it("keeps configured order", () => {

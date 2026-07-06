@@ -339,8 +339,7 @@ export class DialogEditSecurity
     const previousEntity = this._editingAlertEntity?.entity;
     const updates: Partial<SecurityAlertEntityConfig> = {
       entity: ev.detail.value.entity,
-      color:
-        ev.detail.value.color === "none" ? undefined : ev.detail.value.color,
+      color: ev.detail.value.color,
       pulse: ev.detail.value.pulse,
     };
     if (previousEntity !== ev.detail.value.entity) {
