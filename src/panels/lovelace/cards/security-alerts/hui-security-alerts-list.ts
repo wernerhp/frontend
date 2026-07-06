@@ -1,94 +1,44 @@
 import { consume, type ContextType } from "@lit/context";
-import type { HassEntity } from "home-assistant-js-websocket";
-import type { PropertyValues } from "lit";
 import { css, html, LitElement, nothing } from "lit";
 import { customElement, state } from "lit/decorators";
 import { classMap } from "lit/directives/class-map";
 import { styleMap } from "lit/directives/style-map";
-import { computeCssColor } from "../../../common/color/compute-color";
-import { consumeEntityStates } from "../../../common/decorators/consume-context-entry";
-import { computeStateName } from "../../../common/entity/compute_state_name";
-import { fireEvent } from "../../../common/dom/fire_event";
-import "../../../components/ha-card";
-import "../../../components/ha-relative-time";
-import "../../../components/ha-state-icon";
-import "../../../components/tile/ha-tile-container";
-import "../../../components/tile/ha-tile-icon";
-import "../../../components/tile/ha-tile-info";
-import {
-  configContext,
-  formattersContext,
-  internationalizationContext,
-} from "../../../data/context";
-import type { ActionHandlerEvent } from "../../../data/lovelace/action_handler";
-import { pulseOpacityAnimation } from "../../../resources/animations";
-import {
-  computeSecurityAlertItems,
-  extractSecurityAlertEntityIds,
-  type SecurityAlertItem,
-} from "../../security/strategies/security-alerts";
-import type { LovelaceCard, LovelaceGridOptions } from "../types";
-import { tileCardStyle } from "./tile/tile-card-style";
-import type { SecurityAlertsCardConfig } from "./types";
+import { computeCssColor } from "../../../../common/color/compute-color";
+import { computeStateName } from "../../../../common/entity/compute_state_name";
+import { fireEvent } from "../../../../common/dom/fire_event";
+import "../../../../components/ha-card";
+import "../../../../components/ha-relative-time";
+import "../../../../components/ha-state-icon";
+import "../../../../components/tile/ha-tile-container";
+import "../../../../components/tile/ha-tile-icon";
+import "../../../../components/tile/ha-tile-info";
+import { formattersContext } from "../../../../data/context";
+import type { ActionHandlerEvent } from "../../../../data/lovelace/action_handler";
+import { pulseOpacityAnimation } from "../../../../resources/animations";
+import type { SecurityAlertItem } from "../../../security/strategies/security-alerts";
+import { tileCardStyle } from "../tile/tile-card-style";
+import { securityAlertsContext } from "./context";
 
-@customElement("hui-security-alerts-card")
-export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
-  public connectedWhileHidden = true;
-
-  @state() private _config?: SecurityAlertsCardConfig;
-
-  @state() private _alertEntityIds?: string[];
-
+@customElement("hui-security-alerts-list")
+export class HuiSecurityAlertsList extends LitElement {
   @state()
-  @consumeEntityStates({ entityIdPath: ["_alertEntityIds"] })
-  private _states?: Record<string, HassEntity>;
-
-  @state()
-  @consume({ context: configContext, subscribe: true })
-  private _hassConfig!: ContextType<typeof configContext>;
-
-  @state()
-  @consume({ context: internationalizationContext, subscribe: true })
-  private _i18n!: ContextType<typeof internationalizationContext>;
+  @consume({ context: securityAlertsContext, subscribe: true })
+  private _alerts: SecurityAlertItem[] = [];
 
   @state()
   @consume({ context: formattersContext, subscribe: true })
   private _formatters!: ContextType<typeof formattersContext>;
 
-  public setConfig(config: SecurityAlertsCardConfig): void {
-    if (!config.alert_entities) {
-      throw new Error("Specify alert entities");
+  protected render() {
+    if (!this._alerts.length) {
+      return nothing;
     }
-    this._config = config;
-    this._alertEntityIds = extractSecurityAlertEntityIds(config.alert_entities);
-  }
 
-  public connectedCallback(): void {
-    super.connectedCallback();
-    this.updateComplete.then(() => this._updateHeadingVisibility());
-  }
-
-  public getCardSize(): number {
-    return this._visibleAlerts.length + 1;
-  }
-
-  public getGridOptions(): LovelaceGridOptions {
-    return {
-      columns: 12,
-      rows: "auto",
-      min_columns: 6,
-      min_rows: 1,
-    };
-  }
-
-  private get _visibleAlerts(): SecurityAlertItem[] {
-    if (!this._config || !this._alertEntityIds?.length || !this._states) {
-      return [];
-    }
-    return computeSecurityAlertItems(
-      { ...this._hassConfig, ...this._i18n, states: this._states },
-      this._config.alert_entities
-    );
+    return html`
+      <div class="alerts">
+        ${this._alerts.map((alert) => this._renderAlert(alert))}
+      </div>
+    `;
   }
 
   private _handleAction(ev: ActionHandlerEvent): void {
@@ -96,51 +46,6 @@ export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
     if (ev.detail.action === "tap" && entityId) {
       fireEvent(this, "hass-more-info", { entityId });
     }
-  }
-
-  protected willUpdate(changedProps: PropertyValues<this>): void {
-    super.willUpdate(changedProps);
-
-    if (!this._config) {
-      return;
-    }
-
-    const shouldBeHidden = this._visibleAlerts.length === 0;
-
-    if (shouldBeHidden !== this.hidden) {
-      this.style.display = shouldBeHidden ? "none" : "";
-      this.toggleAttribute("hidden", shouldBeHidden);
-      this._updateHeadingVisibility();
-      fireEvent(this, "card-visibility-changed", { value: !shouldBeHidden });
-    }
-  }
-
-  private _updateHeadingVisibility(): void {
-    if (!this._config?.heading_card_id || !this.parentElement) {
-      return;
-    }
-
-    const heading = this.parentElement.querySelector(
-      `#${CSS.escape(this._config.heading_card_id)}`
-    ) as HTMLElement | null;
-    heading?.toggleAttribute("hidden", this.hasAttribute("hidden"));
-  }
-
-  protected render() {
-    if (!this._config || this.hidden) {
-      return nothing;
-    }
-
-    const alerts = this._visibleAlerts;
-    if (!alerts.length) {
-      return nothing;
-    }
-
-    return html`
-      <div class="alerts">
-        ${alerts.map((alert) => this._renderAlert(alert))}
-      </div>
-    `;
   }
 
   private _renderAlert(alert: SecurityAlertItem) {
@@ -253,6 +158,6 @@ export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
 
 declare global {
   interface HTMLElementTagNameMap {
-    "hui-security-alerts-card": HuiSecurityAlertsCard;
+    "hui-security-alerts-list": HuiSecurityAlertsList;
   }
 }

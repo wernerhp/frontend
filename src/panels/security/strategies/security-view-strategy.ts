@@ -254,22 +254,14 @@ export class SecurityViewStrategy extends ReactiveElement {
     const logbookEntityIds = [...entities, ...personEntities];
 
     const sidebarSections: LovelaceSectionConfig[] = [];
-    const activeAlertsHeadingId = "security-active-alerts-heading";
 
     if (config.alert_entities?.length) {
       sidebarSections.push({
         type: "grid",
         cards: [
           {
-            type: "heading",
-            heading: hass.localize("ui.card.security-alerts.title"),
-            heading_style: "title",
-            id: activeAlertsHeadingId,
-          },
-          {
             type: "security-alerts",
             alert_entities: config.alert_entities,
-            heading_card_id: activeAlertsHeadingId,
             grid_options: { columns: 12 },
           },
         ] satisfies LovelaceCardConfig[],
