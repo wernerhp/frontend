@@ -721,6 +721,12 @@ export interface ShortcutCardConfig extends LovelaceCardConfig {
   double_tap_action?: ActionConfig;
 }
 
+export interface SecurityAlertsCardConfig extends LovelaceCardConfig {
+  entities: string[];
+  limit?: number;
+  heading_card_id?: string;
+}
+
 export interface ToggleGroupCardConfig extends LovelaceCardConfig {
   title: string;
   entities: string[];

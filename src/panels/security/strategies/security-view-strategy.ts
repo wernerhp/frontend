@@ -242,37 +242,59 @@ export class SecurityViewStrategy extends ReactiveElement {
 
     const logbookEntityIds = [...entities, ...personEntities];
 
-    const sidebarSection: LovelaceSectionConfig | undefined =
-      hasLogbook && logbookEntityIds.length > 0
-        ? {
-            type: "grid",
-            cards: [
-              {
-                type: "heading",
-                heading: hass.localize(
-                  "ui.panel.lovelace.strategy.security.activity"
-                ),
-                heading_style: "title",
-              } as LovelaceCardConfig,
-              {
-                type: "logbook",
-                target: {
-                  entity_id: logbookEntityIds,
-                },
-                hours_to_show: 24,
-                grid_options: { columns: 12 },
-              } satisfies LogbookCardConfig,
-            ],
-          }
-        : undefined;
+    const sidebarSections: LovelaceSectionConfig[] = [];
+    const activeAlertsHeadingId = "security-active-alerts-heading";
+
+    if (entities.length > 0) {
+      sidebarSections.push({
+        type: "grid",
+        cards: [
+          {
+            type: "heading",
+            heading: hass.localize("ui.card.security-alerts.title"),
+            heading_style: "title",
+            id: activeAlertsHeadingId,
+          },
+          {
+            type: "security-alerts",
+            entities,
+            heading_card_id: activeAlertsHeadingId,
+            grid_options: { columns: 12 },
+          },
+        ] satisfies LovelaceCardConfig[],
+      });
+    }
+
+    if (hasLogbook && logbookEntityIds.length > 0) {
+      sidebarSections.push({
+        type: "grid",
+        cards: [
+          {
+            type: "heading",
+            heading: hass.localize(
+              "ui.panel.lovelace.strategy.security.activity"
+            ),
+            heading_style: "title",
+          } as LovelaceCardConfig,
+          {
+            type: "logbook",
+            target: {
+              entity_id: logbookEntityIds,
+            },
+            hours_to_show: 24,
+            grid_options: { columns: 12 },
+          } satisfies LogbookCardConfig,
+        ],
+      });
+    }
 
     return {
       type: "sections",
       max_columns: 3,
       sections: sections,
-      ...(sidebarSection && {
+      ...(sidebarSections.length > 0 && {
         sidebar: {
-          sections: [sidebarSection],
+          sections: sidebarSections,
           content_label: hass.localize(
             "ui.panel.lovelace.strategy.security.devices"
           ),
