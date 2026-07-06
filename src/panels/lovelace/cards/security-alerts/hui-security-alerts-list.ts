@@ -50,14 +50,15 @@ export class HuiSecurityAlertsList extends LitElement {
 
   private _renderAlert(alert: SecurityAlertItem) {
     const stateDisplay = this._formatters.formatEntityState(alert.stateObj);
+    const pulse = alert.pulse === true;
     return html`
       <ha-card
-        class=${classMap({ [alert.severity]: true, pulse: alert.pulse })}
+        class=${classMap({ [alert.severity]: true, pulse })}
         style=${styleMap({
           "--ha-security-alert-color": alert.color
             ? computeCssColor(alert.color)
             : undefined,
-          "--ha-security-alert-static-opacity": alert.pulse
+          "--ha-security-alert-static-opacity": pulse
             ? undefined
             : "var(--ha-security-alert-pulse-opacity)",
         })}
@@ -133,6 +134,9 @@ export class HuiSecurityAlertsList extends LitElement {
         --ha-pulse-opacity: var(--ha-security-alert-pulse-opacity);
         animation: pulse-opacity var(--ha-security-alert-pulse-duration)
           ease-in-out infinite alternate;
+      }
+      ha-card:not(.pulse)::before {
+        animation: none;
       }
       ha-card.danger {
         --ha-security-alert-color: var(--ha-security-alert-danger-color);
