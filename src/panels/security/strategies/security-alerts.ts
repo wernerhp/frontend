@@ -1,50 +1,118 @@
 import type { HassEntity } from "home-assistant-js-websocket";
 import { mdiCctvOff, mdiLockOpen, mdiShieldAlert, mdiWater } from "@mdi/js";
-import { compareDesc, parseISO } from "date-fns";
 import { computeDomain } from "../../../common/entity/compute_domain";
 import { UNAVAILABLE } from "../../../data/entity/entity";
+import type { SecurityAlertEntityConfig } from "../../../data/frontend";
+import type { HomeAssistant } from "../../../types";
+import type { Condition } from "../../lovelace/common/validate-condition";
+import {
+  checkConditionsMet,
+  extractConditionEntityIds,
+} from "../../lovelace/common/validate-condition";
 
-export type SecurityAlertSeverity = "negative" | "warning" | "info";
+export type SecurityAlertSeverity = "danger" | "warning" | "info";
 
 export interface SecurityAlertItem {
   entityId: string;
   stateObj: HassEntity;
   severity: SecurityAlertSeverity;
+  color?: string;
+  pulse: boolean;
   icon?: string;
   iconPath?: string;
 }
 
 type SecurityAlertIcon = Pick<SecurityAlertItem, "icon" | "iconPath">;
 
-const SEVERITY_ORDER: Record<SecurityAlertSeverity, number> = {
-  negative: 0,
-  warning: 1,
-  info: 2,
-};
+export type SecurityAlertHass = Pick<
+  HomeAssistant,
+  "config" | "locale" | "states" | "user"
+>;
 
-const NEGATIVE_BINARY_SENSOR_DEVICE_CLASSES = new Set([
+const DANGER_BINARY_SENSOR_DEVICE_CLASSES = [
   "carbon_monoxide",
   "gas",
   "moisture",
   "safety",
   "smoke",
-]);
+] as const;
 
-const WARNING_BINARY_SENSOR_DEVICE_CLASSES = new Set([
+const WARNING_BINARY_SENSOR_DEVICE_CLASSES = [
   "door",
   "garage_door",
   "lock",
   "opening",
   "tamper",
   "window",
-]);
+] as const;
 
-const WARNING_COVER_DEVICE_CLASSES = new Set([
+const WARNING_COVER_DEVICE_CLASSES = [
   "door",
   "garage",
   "gate",
   "window",
-]);
+] as const;
+
+type DangerBinarySensorDeviceClass =
+  (typeof DANGER_BINARY_SENSOR_DEVICE_CLASSES)[number];
+type WarningBinarySensorDeviceClass =
+  (typeof WARNING_BINARY_SENSOR_DEVICE_CLASSES)[number];
+type WarningCoverDeviceClass = (typeof WARNING_COVER_DEVICE_CLASSES)[number];
+
+const DANGER_BINARY_SENSOR_DEVICE_CLASS_SET =
+  new Set<DangerBinarySensorDeviceClass>(DANGER_BINARY_SENSOR_DEVICE_CLASSES);
+const WARNING_BINARY_SENSOR_DEVICE_CLASS_SET =
+  new Set<WarningBinarySensorDeviceClass>(WARNING_BINARY_SENSOR_DEVICE_CLASSES);
+const WARNING_COVER_DEVICE_CLASS_SET = new Set<WarningCoverDeviceClass>(
+  WARNING_COVER_DEVICE_CLASSES
+);
+
+const isDangerBinarySensorDeviceClass = (
+  deviceClass: string
+): deviceClass is DangerBinarySensorDeviceClass =>
+  DANGER_BINARY_SENSOR_DEVICE_CLASS_SET.has(
+    deviceClass as DangerBinarySensorDeviceClass
+  );
+
+const isWarningBinarySensorDeviceClass = (
+  deviceClass: string
+): deviceClass is WarningBinarySensorDeviceClass =>
+  WARNING_BINARY_SENSOR_DEVICE_CLASS_SET.has(
+    deviceClass as WarningBinarySensorDeviceClass
+  );
+
+const isWarningCoverDeviceClass = (
+  deviceClass: string
+): deviceClass is WarningCoverDeviceClass =>
+  WARNING_COVER_DEVICE_CLASS_SET.has(deviceClass as WarningCoverDeviceClass);
+
+export const isSecurityAlertEntity = (stateObj: HassEntity): boolean => {
+  const domain = computeDomain(stateObj.entity_id);
+
+  switch (domain) {
+    case "alarm_control_panel":
+    case "camera":
+    case "lock":
+      return true;
+    case "binary_sensor": {
+      const deviceClass = stateObj.attributes.device_class;
+      return (
+        typeof deviceClass === "string" &&
+        (isDangerBinarySensorDeviceClass(deviceClass) ||
+          isWarningBinarySensorDeviceClass(deviceClass))
+      );
+    }
+    case "cover": {
+      const deviceClass = stateObj.attributes.device_class;
+      return (
+        typeof deviceClass === "string" &&
+        isWarningCoverDeviceClass(deviceClass)
+      );
+    }
+    default:
+      return false;
+  }
+};
 
 const computeSecurityAlertSeverity = (
   stateObj: HassEntity
@@ -57,7 +125,7 @@ const computeSecurityAlertSeverity = (
 
   switch (domain) {
     case "alarm_control_panel":
-      return stateObj.state === "triggered" ? "negative" : undefined;
+      return stateObj.state === "triggered" ? "danger" : undefined;
     case "binary_sensor": {
       if (stateObj.state !== "on") {
         return undefined;
@@ -68,10 +136,10 @@ const computeSecurityAlertSeverity = (
         return undefined;
       }
 
-      if (NEGATIVE_BINARY_SENSOR_DEVICE_CLASSES.has(deviceClass)) {
-        return "negative";
+      if (isDangerBinarySensorDeviceClass(deviceClass)) {
+        return "danger";
       }
-      if (WARNING_BINARY_SENSOR_DEVICE_CLASSES.has(deviceClass)) {
+      if (isWarningBinarySensorDeviceClass(deviceClass)) {
         return "warning";
       }
       return undefined;
@@ -79,7 +147,7 @@ const computeSecurityAlertSeverity = (
     case "cover": {
       const deviceClass = stateObj.attributes.device_class;
       return typeof deviceClass === "string" &&
-        WARNING_COVER_DEVICE_CLASSES.has(deviceClass) &&
+        isWarningCoverDeviceClass(deviceClass) &&
         stateObj.state !== "closed"
         ? "warning"
         : undefined;
@@ -92,6 +160,71 @@ const computeSecurityAlertSeverity = (
       return undefined;
   }
 };
+
+export const computeDefaultSecurityAlertColor = (
+  stateObj?: HassEntity
+): string => {
+  if (!stateObj) {
+    return "red";
+  }
+  switch (computeSecurityAlertSeverity(stateObj)) {
+    case "warning":
+      return "yellow";
+    case "info":
+      return "blue";
+    default:
+      return "red";
+  }
+};
+
+export const computeSecurityAlertEntityDefaultColor = (
+  stateObj?: HassEntity
+): string => {
+  if (!stateObj) {
+    return "red";
+  }
+
+  const domain = computeDomain(stateObj.entity_id);
+  if (domain === "camera") {
+    return "blue";
+  }
+  if (domain === "binary_sensor") {
+    const deviceClass = stateObj.attributes.device_class;
+    return typeof deviceClass === "string" &&
+      isWarningBinarySensorDeviceClass(deviceClass)
+      ? "yellow"
+      : "red";
+  }
+  if (domain === "cover" || domain === "lock") {
+    return "yellow";
+  }
+  return "red";
+};
+
+export const computeDefaultSecurityAlertVisibility = (
+  entityId: string
+): Condition[] => [
+  {
+    condition: "state",
+    entity: entityId,
+    state:
+      computeDomain(entityId) === "alarm_control_panel" ? "triggered" : "on",
+  },
+];
+
+export const extractSecurityAlertEntityIds = (
+  alertEntities: SecurityAlertEntityConfig[]
+): string[] => [
+  ...new Set(
+    alertEntities.flatMap((alertEntity) => [
+      alertEntity.entity,
+      ...extractConditionEntityIds(
+        alertEntity.visibility ??
+          computeDefaultSecurityAlertVisibility(alertEntity.entity)
+      ),
+    ])
+  ),
+];
 
 const computeSecurityAlertIcon = (stateObj: HassEntity): SecurityAlertIcon => {
   const domain = computeDomain(stateObj.entity_id);
@@ -116,33 +249,35 @@ const computeSecurityAlertIcon = (stateObj: HassEntity): SecurityAlertIcon => {
 };
 
 export const computeSecurityAlertItems = (
-  states: Record<string, HassEntity>,
-  entityIds: string[]
+  hass: SecurityAlertHass,
+  alertEntities: SecurityAlertEntityConfig[]
 ): SecurityAlertItem[] =>
-  entityIds
-    .map((entityId) => states[entityId])
-    .filter((stateObj): stateObj is HassEntity => Boolean(stateObj))
-    .map((stateObj): SecurityAlertItem | undefined => {
-      const severity = computeSecurityAlertSeverity(stateObj);
-      if (!severity) {
+  alertEntities
+    .map((alertEntity): SecurityAlertItem | undefined => {
+      const stateObj = hass.states[alertEntity.entity];
+      if (!stateObj) {
         return undefined;
       }
+
+      const visibility =
+        alertEntity.visibility ??
+        computeDefaultSecurityAlertVisibility(alertEntity.entity);
+
+      if (
+        !checkConditionsMet(visibility, hass as HomeAssistant, {
+          entity_id: alertEntity.entity,
+        })
+      ) {
+        return undefined;
+      }
+
       return {
         entityId: stateObj.entity_id,
         stateObj,
-        severity,
+        severity: computeSecurityAlertSeverity(stateObj) ?? "danger",
+        color: alertEntity.color,
+        pulse: alertEntity.pulse ?? true,
         ...computeSecurityAlertIcon(stateObj),
       };
     })
-    .filter((item): item is SecurityAlertItem => Boolean(item))
-    .sort((a, b) => {
-      const severityDiff =
-        SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity];
-      if (severityDiff) {
-        return severityDiff;
-      }
-      return compareDesc(
-        parseISO(a.stateObj.last_changed),
-        parseISO(b.stateObj.last_changed)
-      );
-    });
+    .filter((item): item is SecurityAlertItem => Boolean(item));

@@ -1,6 +1,12 @@
 import type { HassEntity } from "home-assistant-js-websocket";
 import { describe, expect, it } from "vitest";
-import { computeSecurityAlertItems } from "../../../../src/panels/security/strategies/security-alerts";
+import {
+  computeDefaultSecurityAlertVisibility,
+  computeSecurityAlertEntityDefaultColor,
+  computeSecurityAlertItems,
+  isSecurityAlertEntity,
+  type SecurityAlertHass,
+} from "../../../../src/panels/security/strategies/security-alerts";
 
 const state = (
   entityId: string,
@@ -19,8 +25,126 @@ const state = (
   context: { id: "", parent_id: null, user_id: null },
 });
 
+const hass = (states: Record<string, HassEntity>): SecurityAlertHass => ({
+  states,
+  user: undefined,
+  config: {
+    time_zone: "UTC",
+  } as SecurityAlertHass["config"],
+  locale: {
+    time_zone: "server",
+  } as SecurityAlertHass["locale"],
+});
+
+describe("computeDefaultSecurityAlertVisibility", () => {
+  it("defaults alarm panels to triggered", () => {
+    expect(
+      computeDefaultSecurityAlertVisibility("alarm_control_panel.house")
+    ).toEqual([
+      {
+        condition: "state",
+        entity: "alarm_control_panel.house",
+        state: "triggered",
+      },
+    ]);
+  });
+
+  it("defaults other entities to on", () => {
+    expect(computeDefaultSecurityAlertVisibility("binary_sensor.leak")).toEqual(
+      [
+        {
+          condition: "state",
+          entity: "binary_sensor.leak",
+          state: "on",
+        },
+      ]
+    );
+  });
+});
+
+describe("computeSecurityAlertEntityDefaultColor", () => {
+  it("uses device class defaults independent of current state", () => {
+    expect(
+      computeSecurityAlertEntityDefaultColor(
+        state(
+          "binary_sensor.carbon_monoxide",
+          "unavailable",
+          "carbon_monoxide",
+          "2026-01-01T00:00:00Z"
+        )
+      )
+    ).toBe("red");
+    expect(
+      computeSecurityAlertEntityDefaultColor(
+        state(
+          "binary_sensor.window",
+          "unavailable",
+          "window",
+          "2026-01-01T00:00:00Z"
+        )
+      )
+    ).toBe("yellow");
+    expect(
+      computeSecurityAlertEntityDefaultColor(
+        state("camera.patio", "unavailable", undefined, "2026-01-01T00:00:00Z")
+      )
+    ).toBe("blue");
+  });
+});
+
+describe("isSecurityAlertEntity", () => {
+  it("includes entities that can be active alerts", () => {
+    expect(
+      isSecurityAlertEntity(
+        state(
+          "binary_sensor.dishwasher_leak",
+          "off",
+          "moisture",
+          "2026-01-01T00:00:00Z"
+        )
+      )
+    ).toBe(true);
+    expect(
+      isSecurityAlertEntity(
+        state("lock.front_door", "locked", undefined, "2026-01-01T00:00:00Z")
+      )
+    ).toBe(true);
+    expect(
+      isSecurityAlertEntity(
+        state("camera.patio", "idle", undefined, "2026-01-01T00:00:00Z")
+      )
+    ).toBe(true);
+  });
+
+  it("excludes entities that do not classify as alerts", () => {
+    expect(
+      isSecurityAlertEntity(
+        state("binary_sensor.motion", "off", "motion", "2026-01-01T00:00:00Z")
+      )
+    ).toBe(false);
+    expect(
+      isSecurityAlertEntity(
+        state("light.kitchen", "on", undefined, "2026-01-01T00:00:00Z")
+      )
+    ).toBe(false);
+  });
+});
+
 describe("computeSecurityAlertItems", () => {
-  it("classifies safety sensors as negative alerts", () => {
+  it("does not infer alerts without configured rows", () => {
+    const states = {
+      "binary_sensor.dishwasher_leak": state(
+        "binary_sensor.dishwasher_leak",
+        "on",
+        "moisture",
+        "2026-01-01T00:00:00Z"
+      ),
+    };
+
+    expect(computeSecurityAlertItems(hass(states), [])).toEqual([]);
+  });
+
+  it("shows configured entities when their default visibility matches", () => {
     const states = {
       "binary_sensor.dishwasher_leak": state(
         "binary_sensor.dishwasher_leak",
@@ -31,11 +155,47 @@ describe("computeSecurityAlertItems", () => {
     };
 
     expect(
-      computeSecurityAlertItems(states, Object.keys(states))[0]?.severity
-    ).toBe("negative");
+      computeSecurityAlertItems(hass(states), [
+        { entity: "binary_sensor.dishwasher_leak" },
+      ])[0]?.severity
+    ).toBe("danger");
   });
 
-  it("classifies open security entities as warning alerts", () => {
+  it("classifies carbon monoxide sensors as danger alerts", () => {
+    const states = {
+      "binary_sensor.carbon_monoxide": state(
+        "binary_sensor.carbon_monoxide",
+        "on",
+        "carbon_monoxide",
+        "2026-01-01T00:00:00Z"
+      ),
+    };
+
+    expect(
+      computeSecurityAlertItems(hass(states), [
+        { entity: "binary_sensor.carbon_monoxide" },
+      ])[0]?.severity
+    ).toBe("danger");
+  });
+
+  it("hides configured entities when their default visibility does not match", () => {
+    const states = {
+      "binary_sensor.dishwasher_leak": state(
+        "binary_sensor.dishwasher_leak",
+        "off",
+        "moisture",
+        "2026-01-01T00:00:00Z"
+      ),
+    };
+
+    expect(
+      computeSecurityAlertItems(hass(states), [
+        { entity: "binary_sensor.dishwasher_leak" },
+      ])
+    ).toEqual([]);
+  });
+
+  it("uses custom visibility conditions", () => {
     const states = {
       "lock.front_door": state(
         "lock.front_door",
@@ -43,44 +203,64 @@ describe("computeSecurityAlertItems", () => {
         undefined,
         "2026-01-01T00:00:00Z"
       ),
+    };
+
+    expect(
+      computeSecurityAlertItems(hass(states), [
+        {
+          entity: "lock.front_door",
+          visibility: [
+            {
+              condition: "state",
+              entity: "lock.front_door",
+              state: "unlocked",
+            },
+          ],
+        },
+      ]).map((item) => item.entityId)
+    ).toEqual(["lock.front_door"]);
+  });
+
+  it("applies configured color and pulse", () => {
+    const states = {
       "binary_sensor.window": state(
         "binary_sensor.window",
         "on",
         "window",
-        "2026-01-01T00:01:00Z"
-      ),
-    };
-
-    expect(
-      computeSecurityAlertItems(states, Object.keys(states)).map(
-        (item) => item.severity
-      )
-    ).toEqual(["warning", "warning"]);
-  });
-
-  it("classifies unavailable entities as info alerts", () => {
-    const states = {
-      "camera.patio": state(
-        "camera.patio",
-        "unavailable",
-        undefined,
         "2026-01-01T00:00:00Z"
       ),
     };
 
     expect(
-      computeSecurityAlertItems(states, Object.keys(states))[0]?.severity
-    ).toBe("info");
+      computeSecurityAlertItems(hass(states), [
+        {
+          entity: "binary_sensor.window",
+          color: "red",
+          pulse: false,
+        },
+      ])[0]
+    ).toMatchObject({ color: "red", pulse: false });
   });
 
-  it("sorts by severity before recency", () => {
+  it("leaves color unset when using the default", () => {
     const states = {
-      "camera.patio": state(
-        "camera.patio",
-        "unavailable",
-        undefined,
-        "2026-01-01T00:03:00Z"
+      "binary_sensor.window": state(
+        "binary_sensor.window",
+        "on",
+        "window",
+        "2026-01-01T00:00:00Z"
       ),
+    };
+
+    expect(
+      computeSecurityAlertItems(hass(states), [
+        { entity: "binary_sensor.window" },
+      ])[0]
+    ).toMatchObject({ color: undefined });
+  });
+
+  it("keeps configured order", () => {
+    const states = {
       "binary_sensor.window": state(
         "binary_sensor.window",
         "on",
@@ -96,28 +276,10 @@ describe("computeSecurityAlertItems", () => {
     };
 
     expect(
-      computeSecurityAlertItems(states, Object.keys(states)).map(
-        (item) => item.entityId
-      )
-    ).toEqual(["binary_sensor.leak", "binary_sensor.window", "camera.patio"]);
-  });
-
-  it("ignores inactive security entities", () => {
-    const states = {
-      "lock.front_door": state(
-        "lock.front_door",
-        "locked",
-        undefined,
-        "2026-01-01T00:00:00Z"
-      ),
-      "binary_sensor.leak": state(
-        "binary_sensor.leak",
-        "off",
-        "moisture",
-        "2026-01-01T00:00:00Z"
-      ),
-    };
-
-    expect(computeSecurityAlertItems(states, Object.keys(states))).toEqual([]);
+      computeSecurityAlertItems(hass(states), [
+        { entity: "binary_sensor.window" },
+        { entity: "binary_sensor.leak" },
+      ]).map((item) => item.entityId)
+    ).toEqual(["binary_sensor.window", "binary_sensor.leak"]);
   });
 });

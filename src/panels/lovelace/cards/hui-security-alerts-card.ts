@@ -4,6 +4,8 @@ import type { PropertyValues } from "lit";
 import { css, html, LitElement, nothing } from "lit";
 import { customElement, state } from "lit/decorators";
 import { classMap } from "lit/directives/class-map";
+import { styleMap } from "lit/directives/style-map";
+import { computeCssColor } from "../../../common/color/compute-color";
 import { consumeEntityStates } from "../../../common/decorators/consume-context-entry";
 import { computeStateName } from "../../../common/entity/compute_state_name";
 import { fireEvent } from "../../../common/dom/fire_event";
@@ -13,18 +15,21 @@ import "../../../components/ha-state-icon";
 import "../../../components/tile/ha-tile-container";
 import "../../../components/tile/ha-tile-icon";
 import "../../../components/tile/ha-tile-info";
-import { formattersContext } from "../../../data/context";
+import {
+  configContext,
+  formattersContext,
+  internationalizationContext,
+} from "../../../data/context";
 import type { ActionHandlerEvent } from "../../../data/lovelace/action_handler";
 import { pulseOpacityAnimation } from "../../../resources/animations";
 import {
   computeSecurityAlertItems,
+  extractSecurityAlertEntityIds,
   type SecurityAlertItem,
 } from "../../security/strategies/security-alerts";
 import type { LovelaceCard, LovelaceGridOptions } from "../types";
 import { tileCardStyle } from "./tile/tile-card-style";
 import type { SecurityAlertsCardConfig } from "./types";
-
-const DEFAULT_ALERT_LIMIT = 3;
 
 @customElement("hui-security-alerts-card")
 export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
@@ -32,19 +37,30 @@ export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
 
   @state() private _config?: SecurityAlertsCardConfig;
 
+  @state() private _alertEntityIds?: string[];
+
   @state()
-  @consumeEntityStates({ entityIdPath: ["_config", "entities"] })
+  @consumeEntityStates({ entityIdPath: ["_alertEntityIds"] })
   private _states?: Record<string, HassEntity>;
+
+  @state()
+  @consume({ context: configContext, subscribe: true })
+  private _hassConfig!: ContextType<typeof configContext>;
+
+  @state()
+  @consume({ context: internationalizationContext, subscribe: true })
+  private _i18n!: ContextType<typeof internationalizationContext>;
 
   @state()
   @consume({ context: formattersContext, subscribe: true })
   private _formatters!: ContextType<typeof formattersContext>;
 
   public setConfig(config: SecurityAlertsCardConfig): void {
-    if (!config.entities) {
-      throw new Error("Specify entities");
+    if (!config.alert_entities) {
+      throw new Error("Specify alert entities");
     }
     this._config = config;
+    this._alertEntityIds = extractSecurityAlertEntityIds(config.alert_entities);
   }
 
   public connectedCallback(): void {
@@ -66,12 +82,12 @@ export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
   }
 
   private get _visibleAlerts(): SecurityAlertItem[] {
-    if (!this._config || !this._states) {
+    if (!this._config || !this._alertEntityIds?.length || !this._states) {
       return [];
     }
-    return computeSecurityAlertItems(this._states, this._config.entities).slice(
-      0,
-      this._config.limit ?? DEFAULT_ALERT_LIMIT
+    return computeSecurityAlertItems(
+      { ...this._hassConfig, ...this._i18n, states: this._states },
+      this._config.alert_entities
     );
   }
 
@@ -130,7 +146,17 @@ export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
   private _renderAlert(alert: SecurityAlertItem) {
     const stateDisplay = this._formatters.formatEntityState(alert.stateObj);
     return html`
-      <ha-card class=${classMap({ [alert.severity]: true })}>
+      <ha-card
+        class=${classMap({ [alert.severity]: true, pulse: alert.pulse })}
+        style=${styleMap({
+          "--ha-security-alert-color": alert.color
+            ? computeCssColor(alert.color)
+            : undefined,
+          "--ha-security-alert-static-opacity": alert.pulse
+            ? undefined
+            : "var(--ha-security-alert-pulse-opacity)",
+        })}
+      >
         <ha-tile-container
           .interactive=${true}
           .actionHandlerOptions=${{ hasHold: false, hasDoubleClick: false }}
@@ -171,11 +197,12 @@ export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
     css`
       :host {
         display: block;
-        --ha-security-alert-negative-color: var(--error-color);
+        --ha-security-alert-danger-color: var(--error-color);
         --ha-security-alert-warning-color: var(--warning-color);
         --ha-security-alert-info-color: var(--info-color);
         --ha-security-alert-pulse-duration: 1s;
         --ha-security-alert-pulse-opacity: 0.3;
+        --ha-security-alert-static-opacity: 0;
       }
       .alerts {
         display: flex;
@@ -186,36 +213,30 @@ export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
         position: relative;
         overflow: hidden;
         height: 100%;
-        --tile-color: var(--primary-color);
+        --tile-color: var(--ha-security-alert-color);
       }
       ha-card::before {
         position: absolute;
         inset: 0;
         border-radius: var(--ha-card-border-radius, var(--ha-border-radius-lg));
+        background-color: var(--ha-security-alert-color);
         content: "";
-        opacity: 0;
+        opacity: var(--ha-security-alert-static-opacity);
         pointer-events: none;
+      }
+      ha-card.pulse::before {
         --ha-pulse-opacity: var(--ha-security-alert-pulse-opacity);
         animation: pulse-opacity var(--ha-security-alert-pulse-duration)
           ease-in-out infinite alternate;
       }
-      ha-card.negative {
-        --tile-color: var(--ha-security-alert-negative-color);
-      }
-      ha-card.negative::before {
-        background-color: var(--ha-security-alert-negative-color);
+      ha-card.danger {
+        --ha-security-alert-color: var(--ha-security-alert-danger-color);
       }
       ha-card.warning {
-        --tile-color: var(--ha-security-alert-warning-color);
-      }
-      ha-card.warning::before {
-        background-color: var(--ha-security-alert-warning-color);
+        --ha-security-alert-color: var(--ha-security-alert-warning-color);
       }
       ha-card.info {
-        --tile-color: var(--ha-security-alert-info-color);
-      }
-      ha-card.info::before {
-        background-color: var(--ha-security-alert-info-color);
+        --ha-security-alert-color: var(--ha-security-alert-info-color);
       }
       ha-tile-container {
         position: relative;

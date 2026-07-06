@@ -2609,6 +2609,24 @@
           "learn_more": "Learn more"
         }
       },
+      "security": {
+        "editor": {
+          "title": "Edit Security and Safety page",
+          "description": "Configure your security and safety display preferences.",
+          "active_alert_entities": "Active alert entities",
+          "active_alert_entities_description": "Display any entities that require attention.",
+          "edit_alert_entity": "Edit alert entity",
+          "alert_entity_description": "This entity will be displayed and highlighted with the selected color when all the conditions are fulfilled.",
+          "entity": "Entity",
+          "add_alert_entity": "Add entity",
+          "alert_color": {
+            "label": "Alert color"
+          },
+          "pulse": "Pulsate",
+          "visibility_conditions": "Visibility conditions",
+          "save_failed": "Failed to save Security and Safety page configuration"
+        }
+      },
       "my": {
         "not_supported": "This redirect is not supported by your Home Assistant instance. Check the {link} for the supported redirects and the version they where introduced.",
         "component_not_loaded": "This redirect is not supported by your Home Assistant instance. You need the integration {integration} to use this redirect.",

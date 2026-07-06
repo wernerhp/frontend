@@ -1,3 +1,4 @@
+import type { HassEntity } from "home-assistant-js-websocket";
 import { ReactiveElement } from "lit";
 import { customElement } from "lit/decorators";
 import { getAreasFloorHierarchy } from "../../../common/areas/areas-floor-hierarchy";
@@ -15,12 +16,14 @@ import type {
   LovelaceSectionRawConfig,
 } from "../../../data/lovelace/config/section";
 import type { LovelaceViewConfig } from "../../../data/lovelace/config/view";
+import type { SecurityAlertEntityConfig } from "../../../data/frontend";
 import type { HomeAssistant } from "../../../types";
 import type { LogbookCardConfig } from "../../lovelace/cards/types";
 import { computeAreaTileCardConfig } from "../../lovelace/strategies/areas/helpers/areas-strategy-helper";
 
 export interface SecurityViewStrategyConfig {
   type: "security";
+  alert_entities?: SecurityAlertEntityConfig[];
 }
 
 export const securityEntityFilters: EntityFilter[] = [
@@ -68,6 +71,14 @@ export const securityEntityFilters: EntityFilter[] = [
     entity_category: "diagnostic",
   },
 ];
+
+export const isSecurityPanelEntity = (
+  hass: HomeAssistant,
+  stateObj: HassEntity
+): boolean =>
+  securityEntityFilters.some((filter) =>
+    generateEntityFilter(hass, filter)(stateObj.entity_id)
+  );
 
 const processAreasForSecurity = (
   areaIds: string[],
@@ -132,7 +143,7 @@ const processUnassignedEntities = (
 @customElement("security-view-strategy")
 export class SecurityViewStrategy extends ReactiveElement {
   static async generate(
-    _config: SecurityViewStrategyConfig,
+    config: SecurityViewStrategyConfig,
     hass: HomeAssistant
   ): Promise<LovelaceViewConfig> {
     const areas = Object.values(hass.areas);
@@ -245,7 +256,7 @@ export class SecurityViewStrategy extends ReactiveElement {
     const sidebarSections: LovelaceSectionConfig[] = [];
     const activeAlertsHeadingId = "security-active-alerts-heading";
 
-    if (entities.length > 0) {
+    if (config.alert_entities?.length) {
       sidebarSections.push({
         type: "grid",
         cards: [
@@ -257,7 +268,7 @@ export class SecurityViewStrategy extends ReactiveElement {
           },
           {
             type: "security-alerts",
-            entities,
+            alert_entities: config.alert_entities,
             heading_card_id: activeAlertsHeadingId,
             grid_options: { columns: 12 },
           },
