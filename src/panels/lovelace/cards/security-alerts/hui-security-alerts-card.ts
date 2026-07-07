@@ -10,7 +10,6 @@ import {
   internationalizationContext,
 } from "../../../../data/context";
 import {
-  computeSecurityAlertEntityDefaultColor,
   computeSecurityAlertItem,
   computeSecurityAlertItems,
   extractSecurityAlertEntityIds,
@@ -82,12 +81,7 @@ export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
         .map((alertEntity) => {
           const stateObj = states[alertEntity.entity];
           return stateObj
-            ? computeSecurityAlertItem(stateObj, {
-                ...alertEntity,
-                color:
-                  alertEntity.color ??
-                  computeSecurityAlertEntityDefaultColor(stateObj),
-              })
+            ? computeSecurityAlertItem(stateObj, alertEntity)
             : undefined;
         })
         .filter((item): item is SecurityAlertItem => Boolean(item));

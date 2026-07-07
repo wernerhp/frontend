@@ -242,7 +242,7 @@ describe("computeSecurityAlertItems", () => {
     ).toMatchObject({ color: "red", pulse: false });
   });
 
-  it("leaves color unset when using the default", () => {
+  it("uses the entity default color when color is not configured", () => {
     const states = {
       "binary_sensor.window": state(
         "binary_sensor.window",
@@ -256,7 +256,7 @@ describe("computeSecurityAlertItems", () => {
       computeSecurityAlertItems(hass(states), [
         { entity: "binary_sensor.window" },
       ])[0]
-    ).toMatchObject({ color: undefined });
+    ).toMatchObject({ color: "yellow" });
   });
 
   it("keeps no color as an explicit color choice", () => {
