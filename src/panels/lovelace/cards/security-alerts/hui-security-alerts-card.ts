@@ -92,8 +92,8 @@ export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
     );
   }
 
-  protected willUpdate(changedProps: PropertyValues<this>): void {
-    super.willUpdate(changedProps);
+  protected updated(changedProps: PropertyValues): void {
+    super.updated(changedProps);
 
     if (!this._config) {
       return;
@@ -107,6 +107,7 @@ export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
       this.style.display = shouldBeHidden ? "none" : "";
       this.toggleAttribute("hidden", shouldBeHidden);
       fireEvent(this, "card-visibility-changed", { value: !shouldBeHidden });
+      this.requestUpdate();
     }
   }
 
