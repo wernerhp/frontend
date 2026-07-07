@@ -68,7 +68,19 @@ describe("hui-security-alerts-list", () => {
     expect(card.classList.contains("pulse")).toBe(true);
   });
 
-  it("does not apply the default severity color when color is none", async () => {
+  it("applies configured colors", async () => {
+    const element = await createList([alert(true, "yellow")]);
+
+    const card = element.shadowRoot!.querySelector("ha-card")!;
+
+    expect(card.classList.contains("warning")).toBe(false);
+    expect(card.classList.contains("no-color")).toBe(false);
+    expect(card.style.getPropertyValue("--ha-security-alert-color")).toBe(
+      "var(--yellow-color)"
+    );
+  });
+
+  it("does not apply a color when color is none", async () => {
     const element = await createList([alert(true, "none")]);
 
     const card = element.shadowRoot!.querySelector("ha-card")!;

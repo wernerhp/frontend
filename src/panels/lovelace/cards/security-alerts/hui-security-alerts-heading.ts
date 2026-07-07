@@ -1,7 +1,8 @@
-import { consume, type ContextType } from "@lit/context";
+import { consume } from "@lit/context";
 import { css, html, LitElement, nothing } from "lit";
 import { customElement, state } from "lit/decorators";
-import { internationalizationContext } from "../../../../data/context";
+import { consumeLocalize } from "../../../../common/decorators/consume-context-entry";
+import type { LocalizeFunc } from "../../../../common/translations/localize";
 import type { SecurityAlertItem } from "../../../security/strategies/security-alerts";
 import { securityAlertsContext } from "./context";
 
@@ -12,17 +13,15 @@ export class HuiSecurityAlertsHeading extends LitElement {
   private _alerts: SecurityAlertItem[] = [];
 
   @state()
-  @consume({ context: internationalizationContext, subscribe: true })
-  private _i18n!: ContextType<typeof internationalizationContext>;
+  @consumeLocalize()
+  private _localize!: LocalizeFunc;
 
   protected render() {
     if (!this._alerts.length) {
       return nothing;
     }
 
-    return html`<h2>
-      ${this._i18n.localize("ui.card.security-alerts.title")}
-    </h2>`;
+    return html`<h2>${this._localize("ui.card.security-alerts.title")}</h2>`;
   }
 
   static styles = css`

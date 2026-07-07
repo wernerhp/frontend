@@ -54,7 +54,7 @@ export class HuiSecurityAlertsList extends LitElement {
     const hasColor = alert.color !== "none";
     return html`
       <ha-card
-        class=${classMap({ [alert.severity]: hasColor, pulse, "no-color": !hasColor })}
+        class=${classMap({ pulse, "no-color": !hasColor })}
         style=${styleMap({
           "--ha-security-alert-color":
             alert.color && hasColor ? computeCssColor(alert.color) : undefined,
@@ -103,9 +103,6 @@ export class HuiSecurityAlertsList extends LitElement {
     css`
       :host {
         display: block;
-        --ha-security-alert-danger-color: var(--error-color);
-        --ha-security-alert-warning-color: var(--warning-color);
-        --ha-security-alert-info-color: var(--info-color);
         --ha-security-alert-pulse-duration: 1s;
         --ha-security-alert-pulse-opacity: 0.3;
         --ha-security-alert-static-opacity: 0;
@@ -142,15 +139,6 @@ export class HuiSecurityAlertsList extends LitElement {
       }
       ha-card:not(.pulse)::before {
         animation: none;
-      }
-      ha-card.danger {
-        --ha-security-alert-color: var(--ha-security-alert-danger-color);
-      }
-      ha-card.warning {
-        --ha-security-alert-color: var(--ha-security-alert-warning-color);
-      }
-      ha-card.info {
-        --ha-security-alert-color: var(--ha-security-alert-info-color);
       }
       ha-tile-container {
         position: relative;
