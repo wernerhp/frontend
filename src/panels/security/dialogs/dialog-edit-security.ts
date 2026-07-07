@@ -3,6 +3,7 @@ import type { HassEntity } from "home-assistant-js-websocket";
 import { css, html, LitElement, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators";
 import { classMap } from "lit/directives/class-map";
+import memoizeOne from "memoize-one";
 import { fireEvent, type HASSDomEvent } from "../../../common/dom/fire_event";
 import "../../../components/ha-button";
 import "../../../components/ha-dialog";
@@ -21,6 +22,8 @@ import type { HassDialog } from "../../../dialogs/make-dialog-manager";
 import { DirtyStateProviderMixin } from "../../../mixins/dirty-state-provider-mixin";
 import { haStyleDialog } from "../../../resources/styles";
 import type { HomeAssistant, ValueChangedEvent } from "../../../types";
+import "../../lovelace/cards/hui-card";
+import type { SecurityAlertsCardConfig } from "../../lovelace/cards/types";
 import "../../lovelace/editor/conditions/ha-card-conditions-editor";
 import "../../lovelace/editor/conditions/ha-visibility-status";
 import type { Condition } from "../../lovelace/common/validate-condition";
@@ -32,6 +35,7 @@ import {
 } from "../strategies/security-alerts";
 import { isSecurityPanelEntity } from "../strategies/security-view-strategy";
 import type { EditSecurityDialogParams } from "./show-dialog-edit-security";
+import { withViewTransition } from "../../../common/util/view-transition";
 
 interface AlertEntityEditorData {
   entity: string;
@@ -116,6 +120,7 @@ export class DialogEditSecurity
       <ha-dialog
         class=${classMap({ subview: Boolean(this._editingAlertEntity) })}
         .open=${this._open}
+        .width=${this._editingAlertEntity ? "large" : "medium"}
         .headerTitle=${this.hass.localize("ui.panel.security.editor.title")}
         .headerSubtitle=${
           this._editingAlertEntity
@@ -191,49 +196,68 @@ export class DialogEditSecurity
           </span>
         </div>
         <div class="entity-editor-content">
-          <p class="entity-editor-description">
-            ${this.hass.localize(
-              "ui.panel.security.editor.alert_entity_description"
-            )}
-          </p>
-          <ha-form
-            .hass=${this.hass}
-            .data=${{
-              entity: alertEntity.entity,
-              color: alertEntity.color,
-              pulse: alertEntity.pulse ?? true,
-            }}
-            .schema=${this._alertEntityFormSchema()}
-            .context=${{ entityFilter: this._alertEntityFilter }}
-            .computeLabel=${this._computeAlertEntityEditorLabel}
-            @value-changed=${this._alertEntityFormChanged}
-          ></ha-form>
-          <div class="conditions">
-            <p class="field-label">
+          <div class="element-editor">
+            <p class="entity-editor-description">
               ${this.hass.localize(
-                "ui.panel.security.editor.visibility_conditions"
+                "ui.panel.security.editor.alert_entity_description"
               )}
             </p>
-            <ha-visibility-status
+            <ha-form
               .hass=${this.hass}
-              .conditions=${
-                alertEntity.visibility ??
-                computeDefaultSecurityAlertVisibility(alertEntity.entity)
-              }
-            ></ha-visibility-status>
-            <ha-card-conditions-editor
+              .data=${{
+                entity: alertEntity.entity,
+                color: alertEntity.color,
+                pulse: alertEntity.pulse ?? true,
+              }}
+              .schema=${this._alertEntityFormSchema()}
+              .context=${{ entityFilter: this._alertEntityFilter }}
+              .computeLabel=${this._computeAlertEntityEditorLabel}
+              @value-changed=${this._alertEntityFormChanged}
+            ></ha-form>
+            <div class="conditions">
+              <p class="field-label">
+                ${this.hass.localize(
+                  "ui.panel.security.editor.visibility_conditions"
+                )}
+              </p>
+              <ha-visibility-status
+                .hass=${this.hass}
+                .conditions=${
+                  alertEntity.visibility ??
+                  computeDefaultSecurityAlertVisibility(alertEntity.entity)
+                }
+              ></ha-visibility-status>
+              <ha-card-conditions-editor
+                .hass=${this.hass}
+                .conditions=${
+                  alertEntity.visibility ??
+                  computeDefaultSecurityAlertVisibility(alertEntity.entity)
+                }
+                @value-changed=${this._alertEntityConditionsChanged}
+              ></ha-card-conditions-editor>
+            </div>
+          </div>
+          <div class="element-preview">
+            <div class="preview-heading">
+              ${this.hass.localize("ui.panel.security.editor.preview")}
+            </div>
+            <hui-card
               .hass=${this.hass}
-              .conditions=${
-                alertEntity.visibility ??
-                computeDefaultSecurityAlertVisibility(alertEntity.entity)
-              }
-              @value-changed=${this._alertEntityConditionsChanged}
-            ></ha-card-conditions-editor>
+              .config=${this._previewCardConfig(alertEntity)}
+              preview
+            ></hui-card>
           </div>
         </div>
       </div>
     `;
   }
+
+  private _previewCardConfig = memoizeOne(
+    (alertEntity: SecurityAlertEntityConfig): SecurityAlertsCardConfig => ({
+      type: "security-alerts",
+      alert_entities: [alertEntity],
+    })
+  );
 
   private _alertEntitiesChanged(
     ev: ValueChangedEvent<SecurityFrontendSystemData["alert_entities"]>
@@ -249,7 +273,9 @@ export class DialogEditSecurity
     ev: HASSDomEvent<HASSDomEvents["edit-security-alert-entity"]>
   ): void {
     ev.stopPropagation();
-    this._editingAlertEntityIndex = ev.detail.index;
+    withViewTransition(() => {
+      this._editingAlertEntityIndex = ev.detail.index;
+    });
   }
 
   private _closeAlertEntityEditor(): void {
@@ -384,7 +410,7 @@ export class DialogEditSecurity
       }
 
       ha-dialog.subview {
-        --dialog-content-padding: 0 var(--ha-space-2);
+        --dialog-content-padding: var(--ha-space-2);
       }
 
       ha-expansion-panel {
@@ -420,7 +446,57 @@ export class DialogEditSecurity
         display: flex;
         flex-direction: column;
         gap: var(--ha-space-4);
-        padding: var(--ha-space-4) var(--ha-space-6) var(--ha-space-6);
+        padding: var(--ha-space-4) 0;
+      }
+
+      .element-editor {
+        display: flex;
+        flex-direction: column;
+        gap: var(--ha-space-4);
+        padding: var(--ha-space-4);
+      }
+
+      .element-preview {
+        position: relative;
+        background: var(--primary-background-color);
+        padding: var(--ha-space-4);
+        border-radius: var(--ha-border-radius-sm);
+      }
+
+      .preview-heading {
+        color: var(--secondary-text-color);
+        font-size: var(--ha-font-size-s);
+        font-weight: var(--ha-font-weight-medium);
+        margin: 0 0 var(--ha-space-2);
+      }
+
+      .element-preview hui-card {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+      }
+
+      @media (min-width: 1000px) {
+        .entity-editor-content {
+          flex-direction: row;
+          max-height: calc(100vh - 209px);
+        }
+
+        .entity-editor-content > .element-editor,
+        .entity-editor-content > .element-preview {
+          flex-basis: 0;
+          flex-grow: 1;
+          flex-shrink: 1;
+          min-width: 0;
+        }
+
+        .entity-editor-content > .element-preview {
+          overflow-y: auto;
+        }
+
+        .entity-editor-content > .element-editor {
+          padding-inline-end: var(--ha-space-4);
+        }
       }
 
       .entity-editor-description {

@@ -2,7 +2,7 @@ import { ContextProvider, consume, type ContextType } from "@lit/context";
 import type { HassEntity } from "home-assistant-js-websocket";
 import type { PropertyValues } from "lit";
 import { css, html, LitElement, nothing } from "lit";
-import { customElement, state } from "lit/decorators";
+import { customElement, property, state } from "lit/decorators";
 import { consumeEntityStates } from "../../../../common/decorators/consume-context-entry";
 import { fireEvent } from "../../../../common/dom/fire_event";
 import {
@@ -10,6 +10,8 @@ import {
   internationalizationContext,
 } from "../../../../data/context";
 import {
+  computeSecurityAlertEntityDefaultColor,
+  computeSecurityAlertItem,
   computeSecurityAlertItems,
   extractSecurityAlertEntityIds,
   type SecurityAlertItem,
@@ -23,6 +25,8 @@ import "./hui-security-alerts-list";
 @customElement("hui-security-alerts-card")
 export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
   public connectedWhileHidden = true;
+
+  @property({ type: Boolean }) public preview = false;
 
   private _alertsProvider = new ContextProvider<{
     __context__: SecurityAlertItem[];
@@ -69,11 +73,27 @@ export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
   }
 
   private get _visibleAlerts(): SecurityAlertItem[] {
-    if (!this._config || !this._alertEntityIds?.length || !this._states) {
+    const states = this._states;
+    if (!this._config || !this._alertEntityIds?.length || !states) {
       return [];
     }
+    if (this.preview) {
+      return this._config.alert_entities
+        .map((alertEntity) => {
+          const stateObj = states[alertEntity.entity];
+          return stateObj
+            ? computeSecurityAlertItem(stateObj, {
+                ...alertEntity,
+                color:
+                  alertEntity.color ??
+                  computeSecurityAlertEntityDefaultColor(stateObj),
+              })
+            : undefined;
+        })
+        .filter((item): item is SecurityAlertItem => Boolean(item));
+    }
     return computeSecurityAlertItems(
-      { ...this._hassConfig, ...this._i18n, states: this._states },
+      { ...this._hassConfig, ...this._i18n, states },
       this._config.alert_entities
     );
   }
@@ -87,7 +107,7 @@ export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
 
     const alerts = this._visibleAlerts;
     this._alertsProvider.setValue(alerts);
-    const shouldBeHidden = alerts.length === 0;
+    const shouldBeHidden = !this.preview && alerts.length === 0;
 
     if (shouldBeHidden !== this.hidden) {
       this.style.display = shouldBeHidden ? "none" : "";
