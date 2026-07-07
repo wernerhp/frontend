@@ -124,12 +124,6 @@ export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
   static styles = css`
     :host {
       display: block;
-      --ha-security-alert-danger-color: var(--error-color);
-      --ha-security-alert-warning-color: var(--warning-color);
-      --ha-security-alert-info-color: var(--info-color);
-      --ha-security-alert-pulse-duration: 1s;
-      --ha-security-alert-pulse-opacity: 0.3;
-      --ha-security-alert-static-opacity: 0;
     }
   `;
 }

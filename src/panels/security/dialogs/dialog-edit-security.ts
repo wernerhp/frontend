@@ -362,13 +362,12 @@ export class DialogEditSecurity
   private _alertEntityFormChanged(
     ev: ValueChangedEvent<AlertEntityEditorData>
   ): void {
-    const previousEntity = this._editingAlertEntity?.entity;
     const updates: Partial<SecurityAlertEntityConfig> = {
       entity: ev.detail.value.entity,
       color: ev.detail.value.color,
       pulse: ev.detail.value.pulse,
     };
-    if (previousEntity !== ev.detail.value.entity) {
+    if (this._editingAlertEntity?.entity !== ev.detail.value.entity) {
       updates.visibility = computeDefaultSecurityAlertVisibility(
         ev.detail.value.entity
       );
@@ -386,15 +385,14 @@ export class DialogEditSecurity
     if (!this._params || !this._state) return;
 
     this._submitting = true;
-    const config: SecurityFrontendSystemData = {
-      ...this._params.config,
-      alert_entities: this._state.alert_entities?.length
-        ? this._state.alert_entities
-        : undefined,
-    };
 
     try {
-      await this._params.saveConfig(config);
+      await this._params.saveConfig({
+        ...this._params.config,
+        alert_entities: this._state.alert_entities?.length
+          ? this._state.alert_entities
+          : undefined,
+      });
       this._markDirtyStateClean();
       this.closeDialog();
     } finally {
