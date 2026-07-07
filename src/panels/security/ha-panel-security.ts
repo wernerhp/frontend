@@ -94,7 +94,7 @@ class PanelSecurity extends LitElement {
 
   private async _loadConfig() {
     try {
-      const [_, data] = await Promise.all([
+      const [, data] = await Promise.all([
         this.hass.loadFragmentTranslation("lovelace"),
         fetchFrontendSystemData(this.hass.connection, "security"),
       ]);

@@ -1,4 +1,5 @@
 import { mdiClose, mdiDragHorizontalVariant, mdiPencil } from "@mdi/js";
+import type { HassEntity } from "home-assistant-js-websocket";
 import { css, html, LitElement, nothing } from "lit";
 import { customElement, property } from "lit/decorators";
 import { repeat } from "lit/directives/repeat";
@@ -95,7 +96,7 @@ export class SecurityAlertsEditor extends LitElement {
     fireEvent(this, "value-changed", { value: next });
   }
 
-  private _alertEntityFilter = (entity) =>
+  private _alertEntityFilter = (entity: HassEntity) =>
     isSecurityPanelEntity(this.hass, entity);
 
   private _getIndex(ev: Event): number | undefined {
@@ -115,7 +116,9 @@ export class SecurityAlertsEditor extends LitElement {
     ev.stopPropagation();
     const index = this._getIndex(ev);
     if (index !== undefined) {
-      this._remove(index);
+      const next = [...this.alertEntities];
+      next.splice(index, 1);
+      this._changed(next);
     }
   }
 
@@ -139,12 +142,6 @@ export class SecurityAlertsEditor extends LitElement {
         visibility: computeDefaultSecurityAlertVisibility(entity),
       },
     ]);
-  }
-
-  private _remove(index: number): void {
-    const next = [...this.alertEntities];
-    next.splice(index, 1);
-    this._changed(next);
   }
 
   private _moved(ev: HASSDomEvent<HASSDomEvents["item-moved"]>): void {

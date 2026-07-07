@@ -248,9 +248,6 @@ const computeSecurityAlertIcon = (stateObj: HassEntity): SecurityAlertIcon => {
     : {};
 };
 
-const computeSecurityAlertPulse = (pulse: unknown): boolean =>
-  pulse === undefined || pulse === true;
-
 export const computeSecurityAlertItem = (
   stateObj: HassEntity,
   alertEntity: SecurityAlertEntityConfig
@@ -259,7 +256,7 @@ export const computeSecurityAlertItem = (
   stateObj,
   severity: computeSecurityAlertSeverity(stateObj) ?? "danger",
   color: alertEntity.color ?? computeSecurityAlertEntityDefaultColor(stateObj),
-  pulse: computeSecurityAlertPulse(alertEntity.pulse),
+  pulse: alertEntity.pulse === undefined || alertEntity.pulse === true,
   ...computeSecurityAlertIcon(stateObj),
 });
 
