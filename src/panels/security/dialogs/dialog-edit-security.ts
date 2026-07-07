@@ -392,6 +392,8 @@ export class DialogEditSecurity
       });
       this._markDirtyStateClean();
       this.closeDialog();
+    } catch {
+      return;
     } finally {
       this._submitting = false;
     }

@@ -10,12 +10,9 @@ import {
   extractConditionEntityIds,
 } from "../../lovelace/common/validate-condition";
 
-export type SecurityAlertSeverity = "danger" | "warning" | "info";
-
 export interface SecurityAlertItem {
   entityId: string;
   stateObj: HassEntity;
-  severity: SecurityAlertSeverity;
   color?: string;
   pulse: boolean;
   icon?: string;
@@ -114,69 +111,6 @@ export const isSecurityAlertEntity = (stateObj: HassEntity): boolean => {
   }
 };
 
-const computeSecurityAlertSeverity = (
-  stateObj: HassEntity
-): SecurityAlertSeverity | undefined => {
-  if (stateObj.state === UNAVAILABLE) {
-    return "info";
-  }
-
-  const domain = computeDomain(stateObj.entity_id);
-
-  switch (domain) {
-    case "alarm_control_panel":
-      return stateObj.state === "triggered" ? "danger" : undefined;
-    case "binary_sensor": {
-      if (stateObj.state !== "on") {
-        return undefined;
-      }
-
-      const deviceClass = stateObj.attributes.device_class;
-      if (typeof deviceClass !== "string") {
-        return undefined;
-      }
-
-      if (isDangerBinarySensorDeviceClass(deviceClass)) {
-        return "danger";
-      }
-      if (isWarningBinarySensorDeviceClass(deviceClass)) {
-        return "warning";
-      }
-      return undefined;
-    }
-    case "cover": {
-      const deviceClass = stateObj.attributes.device_class;
-      return typeof deviceClass === "string" &&
-        isWarningCoverDeviceClass(deviceClass) &&
-        stateObj.state !== "closed"
-        ? "warning"
-        : undefined;
-    }
-    case "lock":
-      return ["jammed", "open", "unlocked"].includes(stateObj.state)
-        ? "warning"
-        : undefined;
-    default:
-      return undefined;
-  }
-};
-
-export const computeDefaultSecurityAlertColor = (
-  stateObj?: HassEntity
-): string => {
-  if (!stateObj) {
-    return "red";
-  }
-  switch (computeSecurityAlertSeverity(stateObj)) {
-    case "warning":
-      return "amber";
-    case "info":
-      return "blue";
-    default:
-      return "red";
-  }
-};
-
 export const computeSecurityAlertEntityDefaultColor = (
   stateObj?: HassEntity
 ): string => {
@@ -254,7 +188,6 @@ export const computeSecurityAlertItem = (
 ): SecurityAlertItem => ({
   entityId: stateObj.entity_id,
   stateObj,
-  severity: computeSecurityAlertSeverity(stateObj) ?? "danger",
   color: alertEntity.color ?? computeSecurityAlertEntityDefaultColor(stateObj),
   pulse: alertEntity.pulse === undefined || alertEntity.pulse === true,
   ...computeSecurityAlertIcon(stateObj),
@@ -275,6 +208,9 @@ export const computeSecurityAlertItems = (
         alertEntity.visibility ??
         computeDefaultSecurityAlertVisibility(alertEntity.entity);
 
+      // checkConditionsMet only reads config, locale, states, and user for
+      // supported condition types. Keep this helper narrowed to avoid
+      // reconstructing a full HomeAssistant object from card contexts.
       if (
         !checkConditionsMet(visibility, hass as HomeAssistant, {
           entity_id: alertEntity.entity,

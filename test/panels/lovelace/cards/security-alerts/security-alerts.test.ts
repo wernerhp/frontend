@@ -157,11 +157,11 @@ describe("computeSecurityAlertItems", () => {
     expect(
       computeSecurityAlertItems(hass(states), [
         { entity: "binary_sensor.dishwasher_leak" },
-      ])[0]?.severity
-    ).toBe("danger");
+      ]).map((item) => item.entityId)
+    ).toEqual(["binary_sensor.dishwasher_leak"]);
   });
 
-  it("classifies carbon monoxide sensors as danger alerts", () => {
+  it("shows carbon monoxide sensors when active", () => {
     const states = {
       "binary_sensor.carbon_monoxide": state(
         "binary_sensor.carbon_monoxide",
@@ -174,8 +174,8 @@ describe("computeSecurityAlertItems", () => {
     expect(
       computeSecurityAlertItems(hass(states), [
         { entity: "binary_sensor.carbon_monoxide" },
-      ])[0]?.severity
-    ).toBe("danger");
+      ]).map((item) => item.entityId)
+    ).toEqual(["binary_sensor.carbon_monoxide"]);
   });
 
   it("hides configured entities when their default visibility does not match", () => {

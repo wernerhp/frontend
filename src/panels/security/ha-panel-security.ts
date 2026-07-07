@@ -63,7 +63,7 @@ class PanelSecurity extends LitElement {
     }
 
     if (oldHass && this.hass) {
-      // If the entity registry changed, ask the user if they want to refresh the config
+      // Refresh the generated view when registries or panels change.
       if (
         oldHass.entities !== this.hass.entities ||
         oldHass.devices !== this.hass.devices ||
@@ -206,7 +206,7 @@ class PanelSecurity extends LitElement {
         duration: 0,
         dismissable: true,
       });
-      return;
+      throw err;
     }
     showToast(this, {
       message: this.hass.localize("ui.common.successfully_saved"),

@@ -28,7 +28,6 @@ const alert = (pulse: boolean, color?: string): SecurityAlertItem => {
   return {
     entityId: stateObj.entity_id,
     stateObj,
-    severity: "warning",
     pulse,
     color,
   };
