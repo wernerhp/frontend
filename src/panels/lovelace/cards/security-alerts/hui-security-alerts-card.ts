@@ -116,7 +116,11 @@ export class HuiSecurityAlertsCard extends LitElement implements LovelaceCard {
     }
 
     return html`
-      <hui-security-alerts-heading></hui-security-alerts-heading>
+      ${
+        this.preview
+          ? nothing
+          : html`<hui-security-alerts-heading></hui-security-alerts-heading>`
+      }
       <hui-security-alerts-list></hui-security-alerts-list>
     `;
   }
