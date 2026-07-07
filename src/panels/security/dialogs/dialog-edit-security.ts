@@ -238,9 +238,6 @@ export class DialogEditSecurity
             </div>
           </div>
           <div class="element-preview">
-            <div class="preview-heading">
-              ${this.hass.localize("ui.panel.security.editor.preview")}
-            </div>
             <hui-card
               .hass=${this.hass}
               .config=${this._previewCardConfig(alertEntity)}
@@ -459,13 +456,6 @@ export class DialogEditSecurity
         background: var(--primary-background-color);
         padding: var(--ha-space-4);
         border-radius: var(--ha-border-radius-sm);
-      }
-
-      .preview-heading {
-        color: var(--secondary-text-color);
-        font-size: var(--ha-font-size-s);
-        font-weight: var(--ha-font-weight-medium);
-        margin: 0 0 var(--ha-space-2);
       }
 
       .element-preview hui-card {

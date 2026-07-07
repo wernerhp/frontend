@@ -2617,7 +2617,6 @@
           "active_alert_entities_description": "Display any entities that require attention.",
           "edit_alert_entity": "Edit alert entity",
           "alert_entity_description": "This entity will be displayed and highlighted with the selected color when all the conditions are fulfilled.",
-          "preview": "Preview",
           "entity": "Entity",
           "add_alert_entity": "Add entity",
           "alert_color": {
