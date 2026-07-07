@@ -69,14 +69,14 @@ describe("hui-security-alerts-list", () => {
   });
 
   it("applies configured colors", async () => {
-    const element = await createList([alert(true, "yellow")]);
+    const element = await createList([alert(true, "amber")]);
 
     const card = element.shadowRoot!.querySelector("ha-card")!;
 
     expect(card.classList.contains("warning")).toBe(false);
     expect(card.classList.contains("no-color")).toBe(false);
     expect(card.style.getPropertyValue("--ha-security-alert-color")).toBe(
-      "var(--yellow-color)"
+      "var(--amber-color)"
     );
   });
 

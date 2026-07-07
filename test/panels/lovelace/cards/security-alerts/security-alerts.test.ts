@@ -83,7 +83,7 @@ describe("computeSecurityAlertEntityDefaultColor", () => {
           "2026-01-01T00:00:00Z"
         )
       )
-    ).toBe("yellow");
+    ).toBe("amber");
     expect(
       computeSecurityAlertEntityDefaultColor(
         state("camera.patio", "unavailable", undefined, "2026-01-01T00:00:00Z")
@@ -256,7 +256,7 @@ describe("computeSecurityAlertItems", () => {
       computeSecurityAlertItems(hass(states), [
         { entity: "binary_sensor.window" },
       ])[0]
-    ).toMatchObject({ color: "yellow" });
+    ).toMatchObject({ color: "amber" });
   });
 
   it("keeps no color as an explicit color choice", () => {

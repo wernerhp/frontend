@@ -169,7 +169,7 @@ export const computeDefaultSecurityAlertColor = (
   }
   switch (computeSecurityAlertSeverity(stateObj)) {
     case "warning":
-      return "yellow";
+      return "amber";
     case "info":
       return "blue";
     default:
@@ -192,11 +192,11 @@ export const computeSecurityAlertEntityDefaultColor = (
     const deviceClass = stateObj.attributes.device_class;
     return typeof deviceClass === "string" &&
       isWarningBinarySensorDeviceClass(deviceClass)
-      ? "yellow"
+      ? "amber"
       : "red";
   }
   if (domain === "cover" || domain === "lock") {
-    return "yellow";
+    return "amber";
   }
   return "red";
 };
