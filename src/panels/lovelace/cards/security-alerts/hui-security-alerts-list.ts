@@ -51,7 +51,7 @@ export class HuiSecurityAlertsList extends LitElement {
   private _renderAlert(alert: SecurityAlertItem) {
     const stateDisplay = this._formatters.formatEntityState(alert.stateObj);
     const pulse = alert.pulse === true;
-    const hasColor = alert.color !== "none";
+    const hasColor = alert.color !== undefined && alert.color !== "none";
     return html`
       <ha-card
         class=${classMap({ pulse, "no-color": !hasColor })}
