@@ -75,6 +75,7 @@ import { showMoreInfoDialog } from "../../dialogs/more-info/show-ha-more-info-di
 import { showQuickBar } from "../../dialogs/quick-bar/show-dialog-quick-bar";
 import { showVoiceCommandDialog } from "../../dialogs/voice-command-dialog/show-ha-voice-command-dialog";
 import { haStyle } from "../../resources/styles";
+import { ChildPanelReady } from "../../layouts/panel-ready";
 import type { HomeAssistant, PanelInfo } from "../../types";
 import { documentationUrl } from "../../util/documentation-url";
 import { isMac } from "../../util/is_mac";
@@ -162,6 +163,8 @@ class HUIRoot extends LitElement {
   private _viewScrollPositions: Record<string, number> = {};
 
   private _restoreScroll = false;
+
+  private _childPanelReady?: ChildPanelReady;
 
   private _undoRedoController = new UndoRedoController<UndoStackItem>(this, {
     apply: (config) => this._applyUndoRedo(config),
@@ -776,7 +779,7 @@ class HUIRoot extends LitElement {
       huiView.narrow = this.narrow;
     }
 
-    let newSelectView;
+    let newSelectView: HUIRoot["_curView"];
 
     let viewPath: string | undefined = this.route!.path.split("/")[1];
     viewPath = viewPath ? decodeURI(viewPath) : undefined;
@@ -1254,7 +1257,7 @@ class HUIRoot extends LitElement {
       return;
     }
 
-    let view;
+    let view: HUIView;
     const viewConfig = this.config.views[viewIndex];
 
     if (!viewConfig) {
@@ -1265,12 +1268,16 @@ class HUIRoot extends LitElement {
     if (this._viewCache[viewIndex]) {
       view = this._viewCache[viewIndex];
     } else {
+      if (!this._childPanelReady) {
+        this._childPanelReady = new ChildPanelReady(this);
+        this.requestUpdate();
+      }
       view = document.createElement("hui-view");
       view.index = viewIndex;
       this._viewCache[viewIndex] = view;
     }
 
-    view.lovelace = this.lovelace;
+    view.lovelace = this.lovelace!;
     view.hass = this.hass;
     view.narrow = this.narrow;
 
