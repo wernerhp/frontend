@@ -253,8 +253,8 @@ class PartialPanelResolver extends HassRouterPage {
       )
     ) {
       await this.rebuild();
-      const component =
-        COMPONENTS[this.hass.panels[this._currentPage].component_name];
+      const panel = this.hass.panels[this._currentPage];
+      const component = panel ? COMPONENTS[panel.component_name] : undefined;
       await promiseTimeout(
         component?.readyTimeout ?? PANEL_READY_TIMEOUT,
         this.pageRendered
