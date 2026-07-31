@@ -14,6 +14,7 @@ interface MockCoverOptions {
   supportedFeatures: number;
   assumedState?: boolean;
   currentPosition?: number;
+  reportsState?: boolean;
 }
 
 const mockCover = (options: MockCoverOptions): CoverEntity => {
@@ -25,6 +26,9 @@ const mockCover = (options: MockCoverOptions): CoverEntity => {
   }
   if (options.currentPosition !== undefined) {
     attributes.current_position = options.currentPosition;
+  }
+  if (options.reportsState !== undefined) {
+    attributes.reports_state = options.reportsState;
   }
   return {
     entity_id: "cover.test",
@@ -47,27 +51,63 @@ const NO_STOP = CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE;
 
 describe("cover button availability", () => {
   describe("canStop", () => {
-    it("is disabled when the cover is idle (open)", () => {
+    it("is disabled when an opted-in cover is idle (open)", () => {
       expect(
-        canStop(mockCover({ state: "open", supportedFeatures: MOTOR }))
+        canStop(
+          mockCover({
+            state: "open",
+            supportedFeatures: MOTOR,
+            reportsState: true,
+          })
+        )
       ).toBe(false);
     });
 
-    it("is disabled when the cover is idle (closed)", () => {
+    it("is disabled when an opted-in cover is idle (closed)", () => {
+      expect(
+        canStop(
+          mockCover({
+            state: "closed",
+            supportedFeatures: MOTOR,
+            reportsState: true,
+          })
+        )
+      ).toBe(false);
+    });
+
+    it("stays enabled when an idle cover does not report motion (class-B guard)", () => {
+      // The regression this whole change exists to prevent: an integration
+      // that supports STOP but never reports opening/closing must keep its
+      // stop button so mid-travel stop is never lost.
+      expect(
+        canStop(mockCover({ state: "open", supportedFeatures: MOTOR }))
+      ).toBe(true);
       expect(
         canStop(mockCover({ state: "closed", supportedFeatures: MOTOR }))
-      ).toBe(false);
+      ).toBe(true);
     });
 
     it("is enabled while opening", () => {
       expect(
-        canStop(mockCover({ state: "opening", supportedFeatures: MOTOR }))
+        canStop(
+          mockCover({
+            state: "opening",
+            supportedFeatures: MOTOR,
+            reportsState: true,
+          })
+        )
       ).toBe(true);
     });
 
     it("is enabled while closing", () => {
       expect(
-        canStop(mockCover({ state: "closing", supportedFeatures: MOTOR }))
+        canStop(
+          mockCover({
+            state: "closing",
+            supportedFeatures: MOTOR,
+            reportsState: true,
+          })
+        )
       ).toBe(true);
     });
 
@@ -84,6 +124,7 @@ describe("cover button availability", () => {
             state: "open",
             supportedFeatures: MOTOR,
             assumedState: true,
+            reportsState: true,
           })
         )
       ).toBe(true);

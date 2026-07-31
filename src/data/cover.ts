@@ -115,8 +115,14 @@ export function canStop(stateObj: CoverEntity): boolean {
     return false;
   }
   const assumedState = stateObj.attributes.assumed_state === true;
-  // Stopping is only meaningful while the cover is actually moving. For an
-  // assumed-state cover the movement is unknown, so keep the button available.
+  // Covers that do not reliably report transient motion keep the stop button
+  // always available: a resting state carries no motion information, and for
+  // some integrations stop performs a real action even when idle.
+  if (!stateObj.attributes.reports_state) {
+    return true;
+  }
+  // Covers that do report motion: stopping is only meaningful while moving.
+  // For an assumed-state cover the movement is unknown, so keep it available.
   return assumedState || isOpening(stateObj) || isClosing(stateObj);
 }
 
@@ -151,6 +157,7 @@ export function canStopTilt(stateObj: CoverEntity): boolean {
 interface CoverEntityAttributes extends HassEntityAttributeBase {
   current_position?: number;
   current_tilt_position?: number;
+  reports_state?: boolean;
 }
 
 export interface CoverEntity extends HassEntityBase {
