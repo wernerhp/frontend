@@ -45,14 +45,17 @@ yarn build --stop
 
 Use `yarn build --modern --background` for production bundle-size or browser performance comparisons that only need modern browser output. It runs the normal metadata and static preparation, minifies and compresses the modern `frontend_latest` bundle and shared static assets, and generates modern-only entry pages and service workers. It deliberately skips the legacy bundle and its service worker.
 
-Do not pass `--help`, `--background`, or `--modern` to `script/build_frontend`; that raw script does not parse arguments and always starts the full foreground build. Use `yarn build` for managed builds. It prevents another foreground or background build from starting while one is using the shared generated files under `build/` and `hass_frontend/`.
+Do not pass `--help`, `--background`, or `--modern` to `script/build_frontend`; that raw script does not parse arguments and always starts the full foreground build. Use `yarn build` for managed builds. App builds and development servers keep exclusive ownership of `hass_frontend/` for their lifetime.
 
-## Unit And Utility Tests
+Managed app, demo, gallery, and E2E app workflows share one lifetime lock, so only one build or development server can run at a time.
 
-- Add or update Vitest tests for data processing, utility code, and behavior that can be tested without a browser.
-- Mock WebSocket connections and API calls at boundaries.
-- Cover loading, error, unavailable, and missing-entity states where relevant.
-- Test accessibility-sensitive behavior when it can be asserted without brittle DOM internals.
+## When To Add Tests
+
+- Write tests for code that computes something: data processing, utility functions, config validation, and what happens when the user interacts with a component.
+- Do not write tests that check what a component looks like: its text, CSS classes, styles, or slots. Do not write tests that check the default value of an option.
+- A component that only takes data from contexts and helpers and puts it in a template does not need a test.
+- If you are not sure a test is useful, describe the test and what it would catch, and let the user decide.
+- Tests never talk to a real Home Assistant. Replace `callWS`, `callApi`, and the connection with fakes.
 
 ## Dev Servers
 
@@ -60,7 +63,7 @@ Do not pass `--help`, `--background`, or `--modern` to `script/build_frontend`; 
 
 `yarn dev:serve` also serves locally and supports `-c` for the core URL and `-p` for the port. The default is 8124, or 8123 in a devcontainer.
 
-Dev server commands support `--background`, `--status`, `--stop`, and `--logs [--follow]`. Prefer managed background mode while iterating so the watcher stays available across test runs without occupying the terminal. `yarn dev` and `yarn dev:serve` share one managed process slot because both write the app output.
+Dev server commands support `--background`, `--status`, `--stop`, and `--logs [--follow]`. `yarn dev`, `yarn dev:serve`, `yarn dev:demo`, and `yarn dev:gallery` also support `--fetch-translations`; this runs translation fetching, including first-time GitHub device authentication, under the workflow lock before starting the watcher. It works in foreground and background modes. Prefer managed background mode while iterating so the watcher stays available across test runs without occupying the terminal. `yarn dev` and `yarn dev:serve` share one managed process slot because both write the app output.
 
 ## Playwright E2E
 
@@ -78,7 +81,7 @@ The custom development wrappers use `/__ha_dev_status` to identify and manage th
 
 Local runs against a watched development server do not always match CI's clean build artifacts, environment, sharding, or worker configuration. Use background servers for the fast iteration loop, but confirm the relevant CI jobs complete successfully before considering E2E changes verified.
 
-Use `-g "<title>" --project=chromium` to narrow a run. `yarn test:e2e` runs all three suites in parallel when every managed server is available, otherwise it runs them sequentially to prevent cold builds racing over shared generated assets. Run suites directly; piping through output truncation hides progress and failures.
+Use `-g "<title>" --project=chromium` to narrow a run. `yarn test:e2e` runs suites sequentially when managed servers are unavailable to prevent cold builds racing over shared generated assets. Run suites directly; piping through output truncation hides progress and failures.
 
 The app suite uses a stripped-down harness for e2e. Demo and gallery use their normal dev servers.
 

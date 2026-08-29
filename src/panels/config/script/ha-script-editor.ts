@@ -804,10 +804,15 @@ export class HaScriptEditor extends SubscribeMixin(
             return;
           }
 
+          this.yamlErrors = undefined;
           resolve(true);
         },
         onClose: () => resolve(false),
-        onDiscard: () => resolve(true),
+        onDiscard: () => {
+          this.yamlErrors = undefined;
+          this._markDirtyStateClean();
+          resolve(true);
+        },
         entityRegistryUpdate: this.entityRegistryUpdate,
         entityRegistryEntry: this.registryEntry,
         title: this.hass.localize(
@@ -896,7 +901,7 @@ export class HaScriptEditor extends SubscribeMixin(
 
   private async _delete() {
     await deleteScript(this.hass, this.scriptId!);
-    goBack("/config");
+    goBack(this.dashboardPath);
   }
 
   private async _promptScriptAlias(): Promise<boolean> {

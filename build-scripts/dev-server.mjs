@@ -8,39 +8,46 @@
 //   --status           Report whether the suite's dev server is running.
 //   --stop             Stop a running background dev server.
 //   --logs [--follow]  Print (or follow) the background dev server log.
+//   --fetch-translations
+//                      Fetch nightly translations before starting (app,
+//                      app-serve, demo, and gallery only).
 //
 // Extra args (for example -p or -c on app-serve) are forwarded to the underlying
 // script. Suites use one of two liveness models:
 //
 //   health   demo, gallery, e2e-app: a fixed port plus the /__ha_dev_status
 //            endpoint each dev server exposes (see runDevServer in
-//            build-scripts/gulp/rspack.js). The port is the source of truth and
-//            the pid is found from it; no state file.
-//   process  app (yarn dev) and app-serve (yarn dev:serve): the app watcher has
-//            no health endpoint, and plain yarn dev has no port at all, so these
-//            track a pidfile and treat the first "Build done" log line as ready.
+//            build-scripts/gulp/rspack.js).
+//   process  app (yarn dev) and app-serve (yarn dev:serve): plain yarn dev has
+//            no port, so these treat the first "Build done" log line as ready.
 
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   LIFECYCLE_MODE_FLAGS,
   acquireProcessRecord,
+  detectCodingAgent,
   isProcessRecordAlive,
   outputLog,
+  offerToStopProcessRecord,
   processStartTime,
   readProcessRecord,
   releaseProcessRecord,
-  removeProcessRecord,
   runCli,
   sleep,
   spawnDetachedToLog,
   spawnForeground,
+  terminateDetachedProcess,
   terminateProcess,
-  waitFor,
   writeProcessRecord,
 } from "./managed-process.mjs";
+import {
+  buildCacheDir,
+  describeOutputOwner,
+  workflowLockEnv,
+  workflowLockFile,
+} from "./output-lock.mjs";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -52,13 +59,7 @@ const developAndServeScript = path.join(
   "script",
   "develop_and_serve"
 );
-const logDir = path.join(repoRoot, "node_modules", ".cache", "ha-dev-server");
-const outputLockFile = path.join(
-  repoRoot,
-  "node_modules",
-  ".cache",
-  "ha-generated-output.lock"
-);
+const logDir = path.join(buildCacheDir, "ha-dev-server");
 
 // Each suite names its yarn alias (for hints), a liveness model, and how to
 // spawn it. health suites carry a fixed port; process suites carry the log line
@@ -77,6 +78,7 @@ const SUITES = new Map([
     "demo",
     {
       alias: "dev:demo",
+      fetchTranslations: true,
       liveness: "health",
       port: 8090,
       spawn: { cmd: gulpBin, args: ["develop-demo"] },
@@ -86,6 +88,7 @@ const SUITES = new Map([
     "gallery",
     {
       alias: "dev:gallery",
+      fetchTranslations: true,
       liveness: "health",
       port: 8100,
       spawn: { cmd: gulpBin, args: ["develop-gallery"] },
@@ -95,10 +98,10 @@ const SUITES = new Map([
     "app",
     {
       alias: "dev",
+      fetchTranslations: true,
       liveness: "process",
       readyLog: /Build done @/,
       spawn: { cmd: gulpBin, args: ["develop-app"] },
-      processKey: "app",
     },
   ],
   [
@@ -107,9 +110,9 @@ const SUITES = new Map([
       alias: "dev:serve",
       liveness: "process",
       acceptsArgs: true,
+      fetchTranslations: true,
       readyLog: /Build done @/,
       spawn: { cmd: developAndServeScript, args: [] },
-      processKey: "app",
     },
   ],
 ]);
@@ -122,40 +125,18 @@ const READY_TIMEOUT_MS =
     ? readyTimeoutSeconds * 1000
     : 180_000;
 
-// Detect a coding agent from a small set of environment markers set by common
-// agent CLIs (env-only; no process-ancestry detection).
-const detectAgent = () => {
-  const env = process.env;
-  const has = (name) => Boolean(env[name]);
-  const eq = (name, value) => env[name] === value;
-  const signals = {
-    opencode: () =>
-      [
-        "OPENCODE",
-        "OPENCODE_BIN_PATH",
-        "OPENCODE_SERVER",
-        "OPENCODE_APP_INFO",
-      ].some(has),
-    "claude-code": () => has("CLAUDECODE"),
-    cursor: () => has("CURSOR_TRACE_ID"),
-    "github-copilot": () =>
-      eq("TERM_PROGRAM", "vscode") && eq("GIT_PAGER", "cat"),
-    // Convention shared by several agents (Crush, Amp, ...).
-    generic: () => has("AGENT") || has("AI_AGENT"),
-  };
-  return Object.keys(signals).find((id) => signals[id]());
-};
-
 const usage = () => {
   const suites = [...SUITES.keys()].join("|");
   process.stderr.write(
     `Usage: node build-scripts/dev-server.mjs --suite <${suites}> ` +
-      `[--background | --status | --stop | --logs [--follow]]\n`
+      `[--background | --status | --stop | --logs [--follow]] ` +
+      `[--fetch-translations]\n`
   );
 };
 
 const parseArgs = (argv) => {
   const args = {
+    fetchTranslations: false,
     mode: "foreground",
     follow: false,
     modes: [],
@@ -171,6 +152,9 @@ const parseArgs = (argv) => {
       case "--follow":
         args.follow = true;
         break;
+      case "--fetch-translations":
+        args.fetchTranslations = true;
+        break;
       default:
         if (LIFECYCLE_MODE_FLAGS.has(arg)) {
           args.mode = LIFECYCLE_MODE_FLAGS.get(arg);
@@ -184,79 +168,71 @@ const parseArgs = (argv) => {
   return args;
 };
 
-const logFileFor = (suite) => path.join(logDir, `${suite}.log`);
-const pidFileFor = (suite) =>
-  path.join(logDir, `${SUITES.get(suite).processKey ?? suite}.pid`);
-const removePidFileIf = (suite, matches) => {
-  const existing = readProcessRecord(pidFileFor(suite));
-  if (!existing) {
-    removeProcessRecord(pidFileFor(suite));
-    return true;
-  }
-  if (matches(existing)) {
-    releaseProcessRecord(outputLockFile, existing.token, () => {
-      if (readProcessRecord(pidFileFor(suite))?.token === existing.token) {
-        removeProcessRecord(pidFileFor(suite));
-      }
-    });
-    return true;
-  }
-  return false;
+const translationPrebuildEnv = (token) => {
+  const env = workflowLockEnv(token);
+  delete env.SKIP_FETCH_NIGHTLY_TRANSLATIONS;
+  return env;
 };
 
-const acquireProcessSuite = (suite) => {
-  const pidFile = pidFileFor(suite);
+const suiteEnv = (token, fetchTranslations = false) => ({
+  ...workflowLockEnv(token),
+  ...(fetchTranslations && { SKIP_FETCH_NIGHTLY_TRANSLATIONS: "1" }),
+});
+
+const runPrebuild = (token, fetchTranslations = false) =>
+  fetchTranslations
+    ? spawnForeground({
+        cmd: gulpBin,
+        args: ["setup-and-fetch-nightly-translations"],
+        cwd: repoRoot,
+        env: translationPrebuildEnv(token),
+        processGroup: true,
+      })
+    : Promise.resolve(0);
+
+const logFileFor = (suite) => path.join(logDir, `${suite}.log`);
+const acquireSuite = (suite) => {
   const token = `${process.pid}-${Date.now()}-${Math.random()}`;
   const record = {
     pid: process.pid,
     startTime: processStartTime(process.pid),
+    processGroup: false,
     kind: "dev",
     suite,
     starting: true,
     token,
   };
-  const result = acquireProcessRecord(outputLockFile, record);
-  if (!result.acquired) {
-    return { existing: result.existing };
-  }
-  try {
-    writeProcessRecord(pidFile, record);
-  } catch (err) {
-    releaseProcessRecord(outputLockFile, token);
-    throw err;
-  }
-  return { token };
+  const result = acquireProcessRecord(workflowLockFile, record);
+  return result.acquired ? { token } : { existing: result.existing };
 };
 
-const updateProcessSuite = (suite, token, child) => {
-  const existing = readPidFile(suite);
+const updateSuite = (suite, token, child, port) => {
+  const existing = readProcessRecord(workflowLockFile);
   if (existing?.token !== token) {
-    throw Error(
-      `Dev server (${suite}) process ownership was lost during startup.`
-    );
+    throw Error(`Dev server (${suite}) ownership was lost during startup.`);
   }
-  const record = {
+  writeProcessRecord(workflowLockFile, {
     ...existing,
     pid: child.pid,
     startTime: processStartTime(child.pid),
+    processGroup: true,
     starting: false,
-  };
-  writePidFile(suite, record);
-  const outputOwner = readProcessRecord(outputLockFile);
-  if (outputOwner?.token !== token) {
-    throw Error(
-      `Dev server (${suite}) output ownership was lost during startup.`
-    );
-  }
-  writeProcessRecord(outputLockFile, record);
+    port,
+  });
 };
 
-const releaseProcessSuite = (suite, token) => {
-  releaseProcessRecord(outputLockFile, token, () => {
-    if (readPidFile(suite)?.token === token) {
-      removeProcessRecord(pidFileFor(suite));
-    }
-  });
+const releaseSuite = (token) => releaseProcessRecord(workflowLockFile, token);
+
+const readSuite = (suite) => {
+  const existing = readProcessRecord(workflowLockFile);
+  if (existing?.kind !== "dev" || existing.suite !== suite) {
+    return undefined;
+  }
+  if (isProcessRecordAlive(existing)) {
+    return existing;
+  }
+  releaseSuite(existing.token);
+  return undefined;
 };
 
 const hints = (suite) => {
@@ -269,6 +245,13 @@ const hints = (suite) => {
 };
 
 const reportProcessConflict = (suite, existing) => {
+  if (existing?.kind === "output") {
+    process.stdout.write(
+      `${describeOutputOwner(existing)} already owns the app output` +
+        `${existing.pid ? ` (pid ${existing.pid})` : ""}.\n`
+    );
+    return;
+  }
   if (existing?.kind === "build") {
     process.stdout.write(
       `Frontend build already running${existing.pid ? ` (pid ${existing.pid})` : ""}. ` +
@@ -282,6 +265,39 @@ const reportProcessConflict = (suite, existing) => {
       `${existing?.pid ? `(pid ${existing.pid})` : ""}\n` +
       hints(existing?.suite ?? suite)
   );
+};
+
+const stopCommandFor = (owner) =>
+  owner?.kind === "build"
+    ? "yarn build --stop"
+    : owner?.kind === "dev"
+      ? `yarn ${SUITES.get(owner.suite)?.alias ?? "dev"} --stop`
+      : undefined;
+
+const acquireSuiteForStart = async (suite) => {
+  const lock = acquireSuite(suite);
+  if (lock.token) {
+    return lock;
+  }
+  reportProcessConflict(suite, lock.existing);
+  if (
+    await offerToStopProcessRecord({
+      file: workflowLockFile,
+      owner: lock.existing,
+      ownerDescription: describeOutputOwner(lock.existing),
+      stopCommand: stopCommandFor(lock.existing),
+    })
+  ) {
+    return acquireSuiteForStart(suite);
+  }
+  return {
+    code:
+      lock.existing?.kind === "dev" &&
+      lock.existing.suite === suite &&
+      !lock.existing.starting
+        ? 0
+        : 1,
+  };
 };
 
 // --- shared spawning and lifecycle ------------------------------------------
@@ -394,163 +410,125 @@ const probe = async (port, timeoutMs = 1000) => {
   return probeHost(0, false);
 };
 
-// Find the pid listening on a port via the first available tool (no state file).
-const pidFromPort = (port) => {
-  const attempts = [
-    [
-      "lsof",
-      ["-ti", `tcp:${port}`, "-sTCP:LISTEN"],
-      (out) => out.trim().split("\n")[0],
-    ],
-    [
-      "ss",
-      ["-ltnpH", `sport = :${port}`],
-      (out) => out.match(/pid=(\d+)/)?.[1],
-    ],
-    ["fuser", [`${port}/tcp`], (out) => out.trim().split(/\s+/)[0]],
-  ];
-  for (const [cmd, cmdArgs, extract] of attempts) {
+const isHttpServing = async (port, timeoutMs = 1000) => {
+  const probeHost = async (index) => {
+    const host = PROBE_HOSTS[index];
+    if (!host) {
+      return false;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const out = execFileSync(cmd, cmdArgs, {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
+      const response = await fetch(`http://${host}:${port}`, {
+        signal: controller.signal,
       });
-      const pid = Number(extract(out));
-      if (Number.isInteger(pid) && pid > 0) {
-        return pid;
+      if (response.ok) {
+        return true;
       }
     } catch {
-      // Try the next tool.
+      // Try the next address.
+    } finally {
+      clearTimeout(timer);
     }
-  }
-  return undefined;
+    return probeHost(index + 1);
+  };
+  return probeHost(0);
 };
 
-const runForegroundHealth = async (suite, cfg) => {
+const runForegroundHealth = async (suite, cfg, fetchTranslations = false) => {
   const { port } = cfg;
-  const status = await probe(port);
-  if (status.state === "ours" && status.suite === suite) {
-    process.stdout.write(
-      `Dev server (${suite}) is already running at http://localhost:${port}\n`
-    );
-    return 0;
+  const lock = await acquireSuiteForStart(suite);
+  if (!lock.token) {
+    return lock.code;
   }
+  const status = await probe(port);
   if (status.state === "ours") {
+    releaseSuite(lock.token);
     process.stderr.write(
-      `Port ${port} is serving the ${status.suite ?? "unknown"} dev server; not ${suite}.\n`
+      `Port ${port} is already serving the ${status.suite ?? "unknown"} dev server.\n`
     );
     return 1;
   }
   if (status.state === "foreign") {
+    releaseSuite(lock.token);
     process.stderr.write(
       `Port ${port} is in use by another process; not the ${suite} dev server.\n`
     );
     return 1;
   }
-  return spawnForeground({
-    cmd: cfg.spawn.cmd,
-    args: cfg.spawn.args,
-    cwd: repoRoot,
-  });
+  try {
+    const prebuildCode = await runPrebuild(lock.token, fetchTranslations);
+    if (prebuildCode !== 0) {
+      return prebuildCode;
+    }
+    return await spawnForeground({
+      cmd: cfg.spawn.cmd,
+      args: cfg.spawn.args,
+      cwd: repoRoot,
+      env: suiteEnv(lock.token, fetchTranslations),
+      processGroup: true,
+      onSpawn: (child) => updateSuite(suite, lock.token, child, port),
+    });
+  } finally {
+    releaseSuite(lock.token);
+  }
 };
 
-const runBackgroundHealth = async (suite, cfg) => {
+const runBackgroundHealth = async (suite, cfg, fetchTranslations = false) => {
   const { port } = cfg;
-  const preflight = await probe(port);
-  if (preflight.state === "ours" && preflight.suite === suite) {
-    const pid = pidFromPort(port);
-    process.stdout.write(
-      `Dev server (${suite}) already running at http://localhost:${port}` +
-        `${pid ? ` (pid ${pid})` : ""}\n${hints(suite)}`
-    );
-    return 0;
+  const lock = await acquireSuiteForStart(suite);
+  if (!lock.token) {
+    return lock.code;
   }
+  const preflight = await probe(port);
   if (preflight.state === "ours") {
+    releaseSuite(lock.token);
     process.stderr.write(
-      `Port ${port} is serving the ${preflight.suite ?? "unknown"} dev server; not ${suite}.\n`
+      `Port ${port} is already serving the ${preflight.suite ?? "unknown"} dev server.\n`
     );
     return 1;
   }
   if (preflight.state === "foreign") {
+    releaseSuite(lock.token);
     process.stderr.write(
       `Port ${port} is in use by another process; not the ${suite} dev server.\n`
     );
     return 1;
   }
-
-  const logFile = logFileFor(suite);
-  const child = await spawnDetachedToLog({
-    cmd: cfg.spawn.cmd,
-    args: cfg.spawn.args,
-    cwd: repoRoot,
-    logFile,
-  });
-  return awaitReady({
-    suite,
-    child,
-    logFile,
-    port,
-    isReady: async () => {
-      const status = await probe(port, 1000);
-      return status.state === "ours" && status.suite === suite;
-    },
-  });
-};
-
-const runStatusHealth = async (suite, cfg) => {
-  const { port } = cfg;
-  const status = await probe(port);
-  if (status.state === "ours" && status.suite === suite) {
-    const pid = pidFromPort(port);
-    process.stdout.write(
-      `Dev server (${suite}) running at http://localhost:${port}` +
-        `${pid ? ` (pid ${pid})` : ""}\n`
-    );
-  } else if (status.state === "ours") {
-    process.stdout.write(
-      `Port ${port} is serving a different Home Assistant frontend dev server (suite ${status.suite ?? "unknown"}); not ${suite}.\n`
-    );
-  } else if (status.state === "foreign") {
-    process.stdout.write(
-      `Port ${port} is in use by another process; not the ${suite} dev server.\n`
-    );
-  } else {
-    process.stdout.write(`Dev server (${suite}) not running.\n`);
+  let child;
+  try {
+    const prebuildCode = await runPrebuild(lock.token, fetchTranslations);
+    if (prebuildCode !== 0) {
+      releaseSuite(lock.token);
+      return prebuildCode;
+    }
+    const logFile = logFileFor(suite);
+    child = await spawnDetachedToLog({
+      cmd: cfg.spawn.cmd,
+      args: cfg.spawn.args,
+      cwd: repoRoot,
+      env: suiteEnv(lock.token, fetchTranslations),
+      logFile,
+    });
+    updateSuite(suite, lock.token, child, port);
+    return awaitReady({
+      suite,
+      child,
+      logFile,
+      port,
+      isReady: async () => {
+        const status = await probe(port, 1000);
+        return status.state === "ours" && status.suite === suite;
+      },
+      onExit: () => releaseSuite(lock.token),
+    });
+  } catch (err) {
+    if (child) {
+      await terminateDetachedProcess(child);
+    }
+    releaseSuite(lock.token);
+    throw err;
   }
-  return 0;
-};
-
-const runStopHealth = async (suite, cfg) => {
-  const { port } = cfg;
-  const status = await probe(port);
-  if (!(status.state === "ours" && status.suite === suite)) {
-    // Idempotent: stopping something that is not running is a success.
-    process.stdout.write(`Dev server (${suite}) not running.\n`);
-    return 0;
-  }
-  const pid = pidFromPort(port);
-  if (!pid) {
-    process.stderr.write(
-      `Dev server (${suite}) is running but its pid could not be found ` +
-        `(no lsof/ss/fuser?). Stop it manually.\n`
-    );
-    return 1;
-  }
-  return terminate(
-    suite,
-    pid,
-    async () => (await probe(port, 800)).state === "free"
-  );
-};
-
-// --- process liveness (pidfile + log-readiness) -----------------------------
-
-const readPidFile = (suite) => {
-  return readProcessRecord(pidFileFor(suite));
-};
-
-const writePidFile = (suite, data) => {
-  writeProcessRecord(pidFileFor(suite), data);
 };
 
 const logIsReady = (logFile, readyLog) => {
@@ -581,102 +559,99 @@ const spawnArgs = (cfg, passthrough) => [
   ...(cfg.acceptsArgs ? passthrough : []),
 ];
 
-const runForegroundProcess = async (suite, cfg, passthrough) => {
-  const lock = acquireProcessSuite(suite);
+const runForegroundProcess = async (
+  suite,
+  cfg,
+  passthrough,
+  fetchTranslations = false
+) => {
+  const lock = await acquireSuiteForStart(suite);
   if (!lock.token) {
-    reportProcessConflict(suite, lock.existing);
-    return 0;
+    return lock.code;
   }
   try {
+    const prebuildCode = await runPrebuild(lock.token, fetchTranslations);
+    if (prebuildCode !== 0) {
+      return prebuildCode;
+    }
     return await spawnForeground({
       cmd: cfg.spawn.cmd,
       args: spawnArgs(cfg, passthrough),
       cwd: repoRoot,
+      env: suiteEnv(lock.token, fetchTranslations),
       processGroup: true,
-      onSpawn: (child) => updateProcessSuite(suite, lock.token, child),
+      onSpawn: (child) => updateSuite(suite, lock.token, child),
     });
   } finally {
-    releaseProcessSuite(suite, lock.token);
+    releaseSuite(lock.token);
   }
 };
 
-const runBackgroundProcess = async (suite, cfg, passthrough) => {
-  const lock = acquireProcessSuite(suite);
+const runBackgroundProcess = async (
+  suite,
+  cfg,
+  passthrough,
+  fetchTranslations = false
+) => {
+  const lock = await acquireSuiteForStart(suite);
   if (!lock.token) {
-    reportProcessConflict(suite, lock.existing);
-    return 0;
+    return lock.code;
   }
 
+  let child;
   try {
+    const prebuildCode = await runPrebuild(lock.token, fetchTranslations);
+    if (prebuildCode !== 0) {
+      releaseSuite(lock.token);
+      return prebuildCode;
+    }
     const logFile = logFileFor(suite);
-    const child = await spawnDetachedToLog({
+    child = await spawnDetachedToLog({
       cmd: cfg.spawn.cmd,
       args: spawnArgs(cfg, passthrough),
       cwd: repoRoot,
+      env: suiteEnv(lock.token, fetchTranslations),
       logFile,
     });
 
     const port = cfg.acceptsArgs ? resolveServePort(passthrough) : cfg.port;
-    updateProcessSuite(suite, lock.token, child);
-    writePidFile(suite, { ...readPidFile(suite), port });
+    updateSuite(suite, lock.token, child, port);
 
     return awaitReady({
       suite,
       child,
       logFile,
       port,
-      isReady: () => logIsReady(logFile, cfg.readyLog),
-      onExit: () => releaseProcessSuite(suite, lock.token),
+      isReady: async () =>
+        logIsReady(logFile, cfg.readyLog) &&
+        (!cfg.acceptsArgs || (await isHttpServing(port))),
+      onExit: () => releaseSuite(lock.token),
     });
   } catch (err) {
-    releaseProcessSuite(suite, lock.token);
+    if (child) {
+      await terminateDetachedProcess(child);
+    }
+    releaseSuite(lock.token);
     throw err;
   }
 };
 
-const runStatusProcess = async (suite) => {
-  const existing = readPidFile(suite);
-  if (existing && isProcessRecordAlive(existing)) {
+const runStatusSuite = async (suite, cfg) => {
+  const existing = readSuite(suite);
+  if (existing) {
     process.stdout.write(
-      `Dev server (${existing.suite ?? suite}) running${urlSuffix(existing.port)} ` +
+      `Dev server (${existing.suite ?? suite}) running${urlSuffix(existing.port ?? cfg.port)} ` +
         `(pid ${existing.pid})\n`
     );
   } else {
-    if (existing) {
-      removePidFileIf(
-        suite,
-        (current) =>
-          current.token === existing.token && !isProcessRecordAlive(current)
-      );
-    }
     process.stdout.write(`Dev server (${suite}) not running.\n`);
   }
   return 0;
 };
 
-const runStopProcess = async (suite) => {
-  let existing = readPidFile(suite);
-  if (existing?.starting) {
-    const token = existing.token;
-    await waitFor(
-      () => {
-        const current = readPidFile(suite);
-        return !current?.starting || current.token !== token;
-      },
-      100,
-      5000
-    );
-    existing = readPidFile(suite);
-  }
-  if (!existing || !isProcessRecordAlive(existing)) {
-    // Idempotent: stopping something that is not running is a success.
-    if (existing) {
-      removePidFileIf(
-        suite,
-        (current) =>
-          current.token === existing.token && !isProcessRecordAlive(current)
-      );
-    }
+const runStopSuite = async (suite) => {
+  const existing = readSuite(suite);
+  if (!existing) {
     process.stdout.write(`Dev server (${suite}) not running.\n`);
     return 0;
   }
@@ -686,14 +661,14 @@ const runStopProcess = async (suite) => {
     activeSuite,
     pid,
     () => !isProcessRecordAlive(existing),
-    () => releaseProcessSuite(activeSuite, existing.token)
+    () => releaseSuite(existing.token)
   );
 };
 
 // --- shared -----------------------------------------------------------------
 
 const runLogs = (suite, follow) => {
-  const activeSuite = readPidFile(suite)?.suite ?? suite;
+  const activeSuite = readSuite(suite)?.suite ?? suite;
   return outputLog(
     logFileFor(activeSuite),
     follow,
@@ -713,6 +688,17 @@ const main = async () => {
     usage();
     return 1;
   }
+  if (
+    args.fetchTranslations &&
+    (!["foreground", "background"].includes(args.mode) ||
+      !cfg.fetchTranslations)
+  ) {
+    process.stderr.write(
+      "--fetch-translations is only supported when starting app, app-serve, demo, or gallery.\n"
+    );
+    usage();
+    return 1;
+  }
   if (args.passthrough.length && !cfg.acceptsArgs) {
     process.stderr.write(
       `Ignoring unexpected arguments: ${args.passthrough.join(" ")}\n`
@@ -726,7 +712,7 @@ const main = async () => {
     mode === "foreground" &&
     !["0", "false"].includes(process.env.HA_DEV_BACKGROUND)
   ) {
-    const agent = detectAgent();
+    const agent = detectCodingAgent();
     if (agent) {
       process.stdout.write(
         `Detected coding agent (${agent}); starting in the background. ` +
@@ -739,21 +725,35 @@ const main = async () => {
   if (mode === "logs") {
     return runLogs(args.suite, args.follow);
   }
+  if (mode === "status") {
+    return runStatusSuite(args.suite, cfg);
+  }
+  if (mode === "stop") {
+    return runStopSuite(args.suite);
+  }
   const handlers =
     cfg.liveness === "health"
       ? {
-          foreground: () => runForegroundHealth(args.suite, cfg),
-          background: () => runBackgroundHealth(args.suite, cfg),
-          status: () => runStatusHealth(args.suite, cfg),
-          stop: () => runStopHealth(args.suite, cfg),
+          foreground: () =>
+            runForegroundHealth(args.suite, cfg, args.fetchTranslations),
+          background: () =>
+            runBackgroundHealth(args.suite, cfg, args.fetchTranslations),
         }
       : {
           foreground: () =>
-            runForegroundProcess(args.suite, cfg, args.passthrough),
+            runForegroundProcess(
+              args.suite,
+              cfg,
+              args.passthrough,
+              args.fetchTranslations
+            ),
           background: () =>
-            runBackgroundProcess(args.suite, cfg, args.passthrough),
-          status: () => runStatusProcess(args.suite),
-          stop: () => runStopProcess(args.suite),
+            runBackgroundProcess(
+              args.suite,
+              cfg,
+              args.passthrough,
+              args.fetchTranslations
+            ),
         };
   return handlers[mode]();
 };

@@ -42,6 +42,7 @@ import { computeDomain } from "../../../../../common/entity/compute_domain";
 import { navigate } from "../../../../../common/navigate";
 import { capitalizeFirstLetter } from "../../../../../common/string/capitalize-first-letter";
 import type { LocalizeKeys } from "../../../../../common/translations/localize";
+import { sanitizeHttpUrl } from "../../../../../common/url/sanitize-http-url";
 import "../../../../../components/buttons/ha-progress-button";
 import "../../../../../components/chips/ha-assist-chip";
 import "../../../../../components/chips/ha-chip-set";
@@ -544,12 +545,12 @@ class SupervisorAppInfo extends MobileAwareMixin(LitElement) {
               ? html`<ha-alert alert-type="error">${this._error}</ha-alert>`
               : nothing
           }
-          ${this._currentAddon.description}.<br />
+          <div class="description-text">${this._currentAddon.description}</div>
           ${this.i18n.localize(
             "ui.panel.config.apps.dashboard.visit_app_page",
             {
               name: html`<a
-                href=${this._currentAddon.url!}
+                href=${ifDefined(sanitizeHttpUrl(this._currentAddon.url))}
                 target="_blank"
                 rel="noreferrer"
                 >${getAppDisplayName(
@@ -1107,7 +1108,11 @@ class SupervisorAppInfo extends MobileAwareMixin(LitElement) {
 
   private get _pathWebui(): string | null {
     const addon = this._currentAddon as HassioAddonDetails;
-    return addon.webui!.replace("[HOST]", document.location.hostname);
+    return (
+      sanitizeHttpUrl(
+        addon.webui!.replace("[HOST]", document.location.hostname)
+      ) ?? null
+    );
   }
 
   private get _computeShowWebUI(): boolean | "" | null {
@@ -1651,6 +1656,15 @@ class SupervisorAppInfo extends MobileAwareMixin(LitElement) {
         }
         .description a {
           color: var(--primary-color);
+        }
+
+        .description:dir(rtl) > .description-text {
+          text-align: right;
+          direction: ltr;
+        }
+
+        .long-description {
+          direction: ltr;
         }
 
         img.logo {

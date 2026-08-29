@@ -1,6 +1,7 @@
 import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { createInterface } from "node:readline/promises";
 
 export const LIFECYCLE_MODE_FLAGS = new Map([
   ["--background", "background"],
@@ -8,6 +9,134 @@ export const LIFECYCLE_MODE_FLAGS = new Map([
   ["--stop", "stop"],
   ["--logs", "logs"],
 ]);
+
+const AGENT_PROVIDERS = [
+  {
+    id: "opencode",
+    env: [
+      "OPENCODE",
+      "OPENCODE_BIN_PATH",
+      "OPENCODE_SERVER",
+      "OPENCODE_APP_INFO",
+      "OPENCODE_MODES",
+    ],
+    processes: ["opencode"],
+  },
+  {
+    id: "claude-code",
+    env: ["CLAUDECODE"],
+    processes: ["claude"],
+  },
+  {
+    id: "cursor",
+    env: ["CURSOR_TRACE_ID"],
+    processes: [],
+  },
+  {
+    id: "github-copilot",
+    matchesEnv: (env) =>
+      env.TERM_PROGRAM === "vscode" && env.GIT_PAGER === "cat",
+    processes: [],
+  },
+  {
+    id: "generic",
+    env: ["AGENT", "AI_AGENT"],
+    processes: [],
+  },
+];
+const MAX_ANCESTRY_HOPS = 24;
+
+const readProcessParent = (pid) => {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const commandEnd = stat.lastIndexOf(")");
+    const commandStart = stat.indexOf("(");
+    if (commandStart === -1 || commandEnd === -1) {
+      return undefined;
+    }
+    const parentPid = Number.parseInt(
+      stat.slice(commandEnd + 2).split(" ")[1] ?? "",
+      10
+    );
+    return Number.isFinite(parentPid)
+      ? {
+          command: stat.slice(commandStart + 1, commandEnd).toLowerCase(),
+          parentPid,
+        }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+export const detectCodingAgent = (env = process.env, pid = process.pid) => {
+  if (env.HA_CODING_AGENT === "0") {
+    return undefined;
+  }
+  const envMatch = AGENT_PROVIDERS.find(
+    (provider) =>
+      provider.matchesEnv?.(env) || provider.env?.some((name) => env[name])
+  );
+  if (envMatch) {
+    return envMatch.id;
+  }
+  if (env.HA_CODING_AGENT === "1") {
+    return "unknown";
+  }
+  let currentPid = pid;
+  for (let hop = 0; hop < MAX_ANCESTRY_HOPS; hop++) {
+    const processInfo = readProcessParent(currentPid);
+    if (!processInfo) {
+      return undefined;
+    }
+    const processMatch = AGENT_PROVIDERS.find((provider) =>
+      provider.processes.some((name) => processInfo.command.includes(name))
+    );
+    if (processMatch) {
+      return processMatch.id;
+    }
+    if (processInfo.parentPid <= 1) {
+      return undefined;
+    }
+    currentPid = processInfo.parentPid;
+  }
+  return undefined;
+};
+
+const canPromptForConflict = () =>
+  Boolean(process.stdin.isTTY && process.stderr.isTTY && !detectCodingAgent());
+
+const formatCommand = (command) =>
+  !("NO_COLOR" in process.env)
+    ? `\u001b[1;36m${command}\u001b[0m`
+    : `\`${command}\``;
+
+const confirmStopConflict = async (ownerDescription, stopCommand) => {
+  const readline = createInterface({
+    input: process.stdin,
+    output: process.stderr,
+  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    process.stderr.write(
+      `${ownerDescription} can be stopped with ${formatCommand(stopCommand)}.\n`
+    );
+    const answer = await readline.question("Stop it and continue? [y/N] ", {
+      signal: controller.signal,
+    });
+    return ["y", "yes"].includes(answer.trim().toLowerCase());
+  } catch (err) {
+    if (err?.name !== "AbortError") {
+      throw err;
+    }
+    process.stderr.write("\n");
+    return false;
+  } finally {
+    clearTimeout(timeout);
+    readline.close();
+  }
+};
 
 export const sleep = (ms) =>
   new Promise((resolve) => {
@@ -212,6 +341,7 @@ export const spawnForeground = ({
   cmd,
   args,
   cwd,
+  env,
   processGroup = false,
   onSpawn,
 }) =>
@@ -219,6 +349,7 @@ export const spawnForeground = ({
     const child = spawn(cmd, args, {
       cwd,
       detached: processGroup,
+      env,
       stdio: "inherit",
     });
     let settled = false;
@@ -265,7 +396,7 @@ export const spawnForeground = ({
     });
   });
 
-export const spawnDetachedToLog = ({ cmd, args, cwd, logFile }) =>
+export const spawnDetachedToLog = ({ cmd, args, cwd, env, logFile }) =>
   new Promise((resolve, reject) => {
     fs.mkdirSync(path.dirname(logFile), { recursive: true });
     const fd = fs.openSync(logFile, "w");
@@ -274,6 +405,7 @@ export const spawnDetachedToLog = ({ cmd, args, cwd, logFile }) =>
       child = spawn(cmd, args, {
         cwd,
         detached: true,
+        env,
         stdio: ["ignore", fd, fd],
       });
     } finally {
@@ -316,6 +448,68 @@ export const terminateProcess = async ({
   await sleep(300);
   return await isStopped();
 };
+
+const sameProcessRecord = (current, expected) =>
+  Boolean(expected?.token) && current?.token === expected.token;
+
+const stopProcessRecord = async (file, owner) => {
+  let current = readProcessRecord(file);
+  if (!current) {
+    return true;
+  }
+  if (!sameProcessRecord(current, owner)) {
+    return false;
+  }
+  if (!isProcessRecordAlive(current)) {
+    releaseProcessRecord(file, current.token);
+    return true;
+  }
+  const stopped = await terminateProcess({
+    pid: current.pid,
+    processGroup: current.processGroup ?? false,
+    isStopped: () => {
+      const latest = readProcessRecord(file);
+      return (
+        !sameProcessRecord(latest, owner) ||
+        !latest ||
+        !isProcessRecordAlive(latest)
+      );
+    },
+  });
+  current = readProcessRecord(file);
+  if (current && !sameProcessRecord(current, owner)) {
+    return false;
+  }
+  if (!stopped && current) {
+    return false;
+  }
+  releaseProcessRecord(file, owner.token);
+  return true;
+};
+
+export const offerToStopProcessRecord = async ({
+  file,
+  owner,
+  ownerDescription,
+  stopCommand,
+}) => {
+  if (
+    !owner ||
+    !stopCommand ||
+    !canPromptForConflict() ||
+    !(await confirmStopConflict(ownerDescription, stopCommand))
+  ) {
+    return false;
+  }
+  return stopProcessRecord(file, owner);
+};
+
+export const terminateDetachedProcess = (child) =>
+  terminateProcess({
+    pid: child.pid,
+    processGroup: true,
+    isStopped: () => !isProcessAlive(child.pid),
+  });
 
 export const outputLog = (logFile, follow, missingMessage) => {
   if (!fs.existsSync(logFile)) {
